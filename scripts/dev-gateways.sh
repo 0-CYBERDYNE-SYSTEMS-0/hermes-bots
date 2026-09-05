@@ -19,9 +19,17 @@ case "${1:-start}" in
       > "$LOG_9119" 2>&1 &
     echo "gateway1 pid=$! log=$LOG_9119 (token $TOKEN_9119)"
     if [[ "${GATEWAY2:-0}" == "1" ]]; then
-      HERMES_DASHBOARD_SESSION_TOKEN="$TOKEN_9120" nohup hermes serve --host 127.0.0.1 --port 9120 \
+      # Second gateway with its OWN home so its profiles/bots are distinct —
+      # this is what makes A→B relay testing meaningful. Seeds config+env from
+      # the main home so the default profile has working model credentials.
+      GW2_HOME="$HOME/.hermes-gw2"
+      mkdir -p "$GW2_HOME"
+      [[ -f "$GW2_HOME/config.yaml" ]] || cp "$HOME/.hermes/config.yaml" "$GW2_HOME/config.yaml"
+      [[ -f "$GW2_HOME/.env" ]] || cp "$HOME/.hermes/.env" "$GW2_HOME/.env" 2>/dev/null || true
+      HERMES_HOME="$GW2_HOME" HERMES_DASHBOARD_SESSION_TOKEN="$TOKEN_9120" \
+        nohup hermes serve --host 127.0.0.1 --port 9120 \
         > "$LOG_9120" 2>&1 &
-      echo "gateway2 pid=$! log=$LOG_9120 (token $TOKEN_9120)"
+      echo "gateway2 pid=$! log=$LOG_9120 home=$GW2_HOME (token $TOKEN_9120)"
     fi
     ;;
   stop)

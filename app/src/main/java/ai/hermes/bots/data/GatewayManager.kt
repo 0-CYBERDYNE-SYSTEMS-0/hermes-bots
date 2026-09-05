@@ -37,6 +37,11 @@ class GatewayManager(
     private val _relayUnsupported = MutableStateFlow<Set<String>>(emptySet())
     val relayUnsupported: StateFlow<Set<String>> = _relayUnsupported
 
+    /** Mark a connection as lacking bot_relay.* support (5110-style -32601 degradation). */
+    fun markRelayUnsupported(connectionId: String) {
+        _relayUnsupported.update { it + connectionId }
+    }
+
     private val stateJobs = mutableMapOf<String, Job>()
     private var syncJob: Job? = null
 

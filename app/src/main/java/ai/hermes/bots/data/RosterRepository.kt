@@ -96,7 +96,6 @@ class RosterRepository(
     }
 
     private suspend fun pollLoop(connectionId: String, conn: ConnectionLive) {
-        android.util.Log.w("RosterRepo", "pollLoop start conn=$connectionId")
         while (true) {
             // First connect can take a moment: wake as soon as the socket is Ready, else re-check
             // on the poll interval. StateFlow.first{} returns immediately when already Ready.
@@ -128,7 +127,6 @@ class RosterRepository(
         val rows = (result["profiles"] as? JsonArray)
             ?.mapNotNull { RosterParsing.botRow(connectionId, it) }
             .orEmpty()
-        android.util.Log.w("RosterRepo", "pollOnce conn=$connectionId rows=${rows.size}")
         perConnection.update { it + (connectionId to rows) }
         recompute()
         refreshAvatars(conn, rows)

@@ -7,47 +7,64 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// Brand palette (DECISIONS.md #9): powder blue = primary accent, burnt orange = secondary.
-private val PowderBlue = Color(0xFFB0E0E6)
-private val PowderBlueDeep = Color(0xFF3E6B79)
-private val PowderBlueLight = Color(0xFF89CEDC)
-private val BurntOrange = Color(0xFF8C4218)
-private val BurntOrangeLight = Color(0xFFFFB68C)
-private val BurntOrangeDeep = Color(0xFF74300C)
+// Brand palette — UI-SPEC.md §3 (powder blue primary, burnt orange secondary).
+// Dark: bg #0E1116 / surface #161B22 / raised #1F262E · primary #8FC7E8 · secondary #E0662B
+// Light: bg #FAFAF8 / surface #FFFFFF / raised #F0EDE8 · primary #3D7EA6 · secondary #C65218
 
-private val LightColors = lightColorScheme(
-    primary = PowderBlueDeep,
-    onPrimary = Color.White,
-    primaryContainer = PowderBlue,
-    onPrimaryContainer = Color(0xFF0A2830),
-    secondary = BurntOrange,
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFFFDBC7),
-    onSecondaryContainer = Color(0xFF331200),
-    background = Color(0xFFF6FAFB),
-    onBackground = Color(0xFF181C1E),
-    surface = Color(0xFFF6FAFB),
-    onSurface = Color(0xFF181C1E),
-    surfaceVariant = Color(0xFFDBE4E7),
-    onSurfaceVariant = Color(0xFF40484C),
-)
+data class BrandPalette(val success: Color, val danger: Color)
 
 private val DarkColors = darkColorScheme(
-    primary = PowderBlueLight,
-    onPrimary = Color(0xFF003640),
-    primaryContainer = Color(0xFF1E4E5A),
-    onPrimaryContainer = PowderBlue,
-    secondary = BurntOrangeLight,
-    onSecondary = Color(0xFF522200),
-    secondaryContainer = BurntOrangeDeep,
-    onSecondaryContainer = Color(0xFFFFDBC7),
-    background = Color(0xFF101416),
-    onBackground = Color(0xFFDFE4E6),
-    surface = Color(0xFF101416),
-    onSurface = Color(0xFFDFE4E6),
-    surfaceVariant = Color(0xFF40484C),
-    onSurfaceVariant = Color(0xFFBFC8CC),
+    primary = Color(0xFF8FC7E8),
+    onPrimary = Color(0xFF0E1116),
+    primaryContainer = Color(0xFF1E3A4C),
+    onPrimaryContainer = Color(0xFF8FC7E8),
+    secondary = Color(0xFFE0662B),
+    onSecondary = Color(0xFF0E1116),
+    secondaryContainer = Color(0xFF4A2412),
+    onSecondaryContainer = Color(0xFFF6B79A),
+    background = Color(0xFF0E1116),
+    onBackground = Color(0xFFE6EDF3),
+    surface = Color(0xFF161B22),
+    onSurface = Color(0xFFE6EDF3),
+    surfaceVariant = Color(0xFF1F262E),
+    onSurfaceVariant = Color(0xFF9DA7B3),
+    outline = Color(0xFF2D3640),
+    surfaceContainer = Color(0xFF1F262E),
+    surfaceContainerHigh = Color(0xFF242B34),
+    surfaceContainerHighest = Color(0xFF2A323C),
+    surfaceTint = Color(0xFF1F262E),
+    error = Color(0xFFE5534B),
+    onError = Color(0xFF0E1116),
 )
+
+private val LightColors = lightColorScheme(
+    primary = Color(0xFF3D7EA6),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD6E7F2),
+    onPrimaryContainer = Color(0xFF1C3A4D),
+    secondary = Color(0xFFC65218),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFF7DCCB),
+    onSecondaryContainer = Color(0xFF7A3110),
+    background = Color(0xFFFAFAF8),
+    onBackground = Color(0xFF1C2128),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1C2128),
+    surfaceVariant = Color(0xFFF0EDE8),
+    onSurfaceVariant = Color(0xFF57606A),
+    outline = Color(0xFFD0D4D9),
+    surfaceContainer = Color(0xFFF0EDE8),
+    surfaceContainerHigh = Color(0xFFEBE7E1),
+    surfaceContainerHighest = Color(0xFFE5E1DB),
+    surfaceTint = Color(0xFFF0EDE8),
+    error = Color(0xFFC93C37),
+    onError = Color.White,
+)
+
+@Composable
+fun brandPalette(): BrandPalette =
+    if (isSystemInDarkTheme()) BrandPalette(success = Color(0xFF57AB5A), danger = Color(0xFFE5534B))
+    else BrandPalette(success = Color(0xFF3E8F4A), danger = Color(0xFFC93C37))
 
 @Composable
 fun HermesBotsTheme(

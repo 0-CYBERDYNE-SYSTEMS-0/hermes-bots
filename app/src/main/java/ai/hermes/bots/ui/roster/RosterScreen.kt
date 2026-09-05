@@ -2,8 +2,8 @@ package ai.hermes.bots.ui.roster
 
 import ai.hermes.bots.data.AvatarImage
 import ai.hermes.bots.data.RosterEntry
+import ai.hermes.bots.ui.components.FaceAvatar
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,15 +41,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import android.graphics.BitmapFactory
 import java.util.Locale
-import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +79,9 @@ fun RosterScreen(
                     IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) search = "" }) {
                         Icon(Icons.Filled.Search, contentDescription = "Search")
                     }
+                    IconButton(onClick = { /* notifications land in Phase 4 */ }) {
+                        Icon(Icons.Filled.Notifications, contentDescription = "Notifications")
+                    }
                     IconButton(onClick = onOpenGateways) {
                         Icon(Icons.Filled.Settings, contentDescription = "Gateways")
                     }
@@ -116,7 +114,7 @@ fun RosterScreen(
                                 .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
                                 .padding(2.dp),
                         ) {
-                            BotAvatar(entry.bot.name, avatars[avatarKey(entry.bot)], size = 28.dp)
+                            FaceAvatar(entry.bot.name, 28.dp, real = avatars[avatarKey(entry.bot)])
                         }
                     }
                 }
@@ -176,7 +174,7 @@ private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box {
-            BotAvatar(bot.name, avatar, size = 44.dp)
+            FaceAvatar(bot.name, 48.dp, real = avatar)
             if (entry.unread) {
                 Box(
                     Modifier
@@ -186,6 +184,18 @@ private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> 
                         .background(MaterialTheme.colorScheme.secondary),
                 )
             }
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(if (entry.activeNow) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface)
+                    .border(
+                        width = 1.5.dp,
+                        color = if (entry.activeNow) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        shape = CircleShape,
+                    ),
+            )
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
@@ -194,7 +204,7 @@ private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> 
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                bot.lastPreview ?: bot.description ?: bot.model ?: "",
+                (bot.lastPreview ?: bot.description ?: bot.model ?: "").replace('*', ' ').replace('`', '\''),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -210,47 +220,6 @@ private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> 
                 Text("active", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
         }
-    }
-}
-
-@Composable
-private fun BotAvatar(name: String, avatar: AvatarImage?, size: Dp) {
-    if (avatar != null) {
-        val bitmap = remember(avatar.bytes) {
-            BitmapFactory.decodeByteArray(avatar.bytes, 0, avatar.bytes.size)
-        }
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = name,
-                modifier = Modifier.size(size).clip(CircleShape),
-                contentScale = ContentScale.Crop,
-            )
-            return
-        }
-    }
-    FallbackAvatar(name, size)
-}
-
-@Composable
-private fun FallbackAvatar(name: String, size: Dp) {
-    val palette = listOf(
-        Color(0xFF3E6B79), // deep powder blue
-        Color(0xFF89CEDC), // light powder blue
-        Color(0xFF8C4218), // burnt orange
-        Color(0xFFFFB68C), // light burnt orange
-        Color(0xFF1E4E5A), // powder blue container
-    )
-    val color = palette[abs(name.hashCode()) % palette.size]
-    Box(
-        Modifier.size(size).clip(CircleShape).background(color),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            name.take(1).uppercase(),
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium,
-        )
     }
 }
 

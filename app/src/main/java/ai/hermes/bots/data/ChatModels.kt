@@ -31,6 +31,9 @@ data class ChatUiState(
     val streaming: Boolean = false,
     val sessionTitle: String? = null,
     val statusText: String? = null,
+    val approvalResolved: String? = null,
+    val approvalExpired: Boolean = false,
+    val botModel: String? = null,
 )
 
 /** Parses the display `messages` array returned by session.resume / session.create

@@ -2,6 +2,7 @@ package ai.hermes.bots.ui.chat
 
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.ApprovalCard
+import ai.hermes.bots.data.AvatarImage
 import ai.hermes.bots.data.CanonicalChat
 import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ChatMessagesParser
@@ -37,6 +38,7 @@ class ChatViewModel(
     private val graph = (app as HermesBotsApp).graph
     private val _ui = MutableStateFlow(ChatUiState())
     val ui: StateFlow<ChatUiState> = _ui
+    val avatars = graph.roster.avatars
 
     private var gateway: HermesGateway? = null
     private var runtimeSessionId: String? = null
@@ -75,6 +77,7 @@ class ChatViewModel(
             if (!adopted) {
                 adopt(gw.request(Catalog.METHOD_SESSION_CREATE, CanonicalChat.createParams(botName), 120_000))
             }
+            _ui.update { it.copy(botModel = row.model) }
             startCollectors()
         } catch (e: Exception) {
             _ui.update { it.copy(loading = false, error = e.message ?: "failed to open chat") }
@@ -219,7 +222,13 @@ class ChatViewModel(
             Catalog.EVENT_CLARIFY_REQUEST,
             Catalog.EVENT_SUDO_REQUEST,
             Catalog.EVENT_SECRET_REQUEST,
-            -> _ui.update { it.copy(approval = CanonicalChat.parseCard(ev.type, ev.payload)) }
+            -> _ui.update {
+                it.copy(
+                    approval = CanonicalChat.parseCard(ev.type, ev.payload),
+                    approvalResolved = null,
+                    approvalExpired = false,
+                )
+            }
             Catalog.EVENT_SESSION_TITLE -> _ui.update { it.copy(sessionTitle = str("title")) }
             Catalog.EVENT_ERROR -> _ui.update { st ->
                 st.copy(
@@ -231,10 +240,10 @@ class ChatViewModel(
                 if (ev.type.endsWith(".expire")) {
                     val rid = str("request_id")
                     _ui.update { st ->
-                        if (st.approval?.requestId != null && st.approval?.requestId == rid) {
-                            st.copy(approval = null)
-                        } else {
-                            st
+                        when {
+                            st.approval?.requestId != null && st.approval?.requestId == rid ->
+                                st.copy(approval = null, approvalExpired = true, approvalResolved = null)
+                            else -> st
                         }
                     }
                 }
@@ -301,7 +310,7 @@ class ChatViewModel(
                         },
                     )
                 }
-                _ui.update { it.copy(approval = null) }
+                _ui.update { it.copy(approval = null, approvalResolved = choice) }
             } catch (e: Exception) {
                 _ui.update { it.copy(error = "respond failed: ${e.message}") }
             }

@@ -6,6 +6,7 @@ import ai.hermes.bots.ui.components.FaceAvatar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,17 +21,23 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -50,6 +57,10 @@ import java.util.Locale
 fun RosterScreen(
     onOpenChat: (connectionId: String, botName: String) -> Unit,
     onOpenGateways: () -> Unit,
+    onOpenGroups: () -> Unit,
+    onNewBot: () -> Unit,
+    onEditBot: (connectionId: String, botName: String) -> Unit,
+    onOpenRoutines: (connectionId: String, botName: String) -> Unit,
     vm: RosterViewModel = viewModel(),
 ) {
     val roster by vm.roster.collectAsState()
@@ -57,6 +68,8 @@ fun RosterScreen(
     var search by remember { mutableStateOf("") }
     var searchOpen by remember { mutableStateOf(false) }
     var showHidden by remember { mutableStateOf(false) }
+    var sheetFor by remember { mutableStateOf<RosterEntry?>(null) }
+    var sectionFor by remember { mutableStateOf<RosterEntry?>(null) }
 
     val hiddenCount = roster.count { it.bot.hidden }
     val query = search.trim().lowercase(Locale.ROOT)
@@ -81,6 +94,12 @@ fun RosterScreen(
                     }
                     IconButton(onClick = { /* notifications land in Phase 4 */ }) {
                         Icon(Icons.Filled.Notifications, contentDescription = "Notifications")
+                    }
+                    IconButton(onClick = onNewBot) {
+                        Icon(Icons.Filled.Add, contentDescription = "New bot")
+                    }
+                    IconButton(onClick = onOpenGroups) {
+                        Icon(Icons.Filled.Info, contentDescription = "Groups")
                     }
                     IconButton(onClick = onOpenGateways) {
                         Icon(Icons.Filled.Settings, contentDescription = "Gateways")
@@ -152,24 +171,64 @@ fun RosterScreen(
                                 vm.markRead(entry.bot.connectionId, entry.bot.name)
                                 onOpenChat(entry.bot.connectionId, entry.bot.name)
                             },
+                            onLongClick = { sheetFor = entry },
                         )
                     }
                 }
             }
         }
     }
+
+    sheetFor?.let { entry ->
+        ModalBottomSheet(onDismissRequest = { sheetFor = null }) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                ListItem(
+                    headlineContent = { Text("Routines") },
+                    modifier = Modifier.clickable { sheetFor = null; onOpenRoutines(entry.bot.connectionId, entry.bot.name) },
+                )
+                ListItem(
+                    headlineContent = { Text("Edit bot") },
+                    modifier = Modifier.clickable { sheetFor = null; onEditBot(entry.bot.connectionId, entry.bot.name) },
+                )
+                ListItem(
+                    headlineContent = { Text(if (entry.bot.hidden) "Unhide" else "Hide") },
+                    modifier = Modifier.clickable { vm.setHidden(entry.bot.connectionId, entry.bot.name, !entry.bot.hidden); sheetFor = null },
+                )
+                ListItem(
+                    headlineContent = { Text("Move to section…") },
+                    modifier = Modifier.clickable { sectionFor = entry; sheetFor = null },
+                )
+            }
+        }
+    }
+
+    sectionFor?.let { entry ->
+        var text by remember(entry) { mutableStateOf(entry.bot.sectionId.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { sectionFor = null },
+            title = { Text("Move to section") },
+            text = {
+                OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Section id (blank = Bots)") }, singleLine = true)
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.setSection(entry.bot.connectionId, entry.bot.name, text.trim()); sectionFor = null }) { Text("Move") }
+            },
+            dismissButton = { TextButton(onClick = { sectionFor = null }) { Text("Cancel") } },
+        )
+    }
 }
 
 private fun avatarKey(bot: ai.hermes.bots.data.BotRow): String = "${bot.connectionId}:${bot.name}"
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> Unit) {
+private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> Unit, onLongClick: () -> Unit) {
     val bot = entry.bot
     Row(
         Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

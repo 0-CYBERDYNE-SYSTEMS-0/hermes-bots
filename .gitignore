@@ -8,3 +8,4 @@ captures/
 *.keystore
 !debug.keystore
 *.jks
+.zcode/

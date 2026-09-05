@@ -2,6 +2,8 @@ package ai.hermes.bots.protocol
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -14,8 +16,14 @@ import java.net.URLEncoder
 import java.util.Base64
 
 /** Gateway auth mode (DECISIONS.md #4: token AND basic; PROTOCOL.md §2). */
+@Serializable
 sealed interface GatewayAuth {
+    @Serializable
+    @SerialName("token")
     data class TokenAuth(val token: String) : GatewayAuth
+
+    @Serializable
+    @SerialName("basic")
     data class BasicAuth(val username: String, val password: String) : GatewayAuth
 }
 

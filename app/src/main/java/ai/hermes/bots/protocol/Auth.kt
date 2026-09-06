@@ -61,7 +61,7 @@ object Auth {
         wsUrl(baseUrl) + "?ticket=" + encode(ticket)
 
     private fun encode(value: String): String =
-        URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
+        URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     suspend fun probe(client: OkHttpClient, baseUrl: String): GatewayProbe =
         withContext(Dispatchers.IO) {

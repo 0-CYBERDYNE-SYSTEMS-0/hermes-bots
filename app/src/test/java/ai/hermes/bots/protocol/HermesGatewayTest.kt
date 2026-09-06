@@ -250,6 +250,88 @@ class HermesGatewayTest {
     }
 
     @Test
+    fun `same epoch on reconnect preserves watermarks and generation`() {
+        val secondReady = AtomicBoolean(false)
+        server.enqueue(MockResponse().withWebSocketUpgrade(RpcServer(wsRef) { emptyList() }))
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                object : WebSocketListener() {
+                    override fun onOpen(ws: WebSocket, response: Response) {
+                        wsRef.set(ws)
+                        secondReady.set(true)
+                        ws.send(READY_FRAME)
+                    }
+                },
+            ),
+        )
+        awaitReady()
+        wsRef.get()!!.send(push("s1", 5, "message.delta"))
+        until { gateway.watermarks.value["s1"] == 5L }
+        val genBefore = gateway.epochGeneration.value
+        wsRef.get()!!.close(1001, "server restart")
+        until { secondReady.get() && socket.state.value is SocketState.Ready }
+        // Settle: give the gateway's epoch collector a chance to (wrongly) reset state.
+        Thread.sleep(300)
+        // PROTOCOL.md §3: only a CHANGED replay_epoch resets watermarks; a same-epoch
+        // reconnect must keep them so session.events.since(last_seen) stays accurate.
+        assertEquals(mapOf("s1" to 5L), gateway.watermarks.value)
+        assertEquals(genBefore, gateway.epochGeneration.value)
+    }
+
+    @Test
+    fun `since with truncated true signals resume refetch`() {
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                RpcServer(wsRef) { text ->
+                    if ("session.events.since" in text) {
+                        val id = idOf(text)
+                        listOf(
+                            """{"jsonrpc":"2.0","id":$id,"result":{"events":[],"latest_seq":42,"truncated":true,"epoch":"epoch-1"}}""",
+                        )
+                    } else {
+                        emptyList()
+                    }
+                },
+            ),
+        )
+        awaitReady()
+        assertEquals("epoch-1", gateway.replayEpoch)
+        val catchUp = runBlocking { gateway.since("s1", 5) }
+        assertEquals(true, catchUp.truncated)
+        assertEquals(42L, catchUp.latestSeq)
+        assertTrue(catchUp.events.isEmpty())
+        // PROTOCOL.md §3: truncated:true → client must refetch via session.resume
+        // instead of trusting the replay.
+        assertTrue(catchUp.truncated || catchUp.epoch != gateway.replayEpoch)
+    }
+
+    @Test
+    fun `since with foreign epoch signals resume refetch`() {
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                RpcServer(wsRef) { text ->
+                    if ("session.events.since" in text) {
+                        val id = idOf(text)
+                        listOf(
+                            """{"jsonrpc":"2.0","id":$id,"result":{"events":[{"type":"message.delta","session_id":"s1","seq":6,"payload":{"text":"x"}}],"latest_seq":6,"truncated":false,"epoch":"epoch-9"}}""",
+                        )
+                    } else {
+                        emptyList()
+                    }
+                },
+            ),
+        )
+        awaitReady()
+        assertEquals("epoch-1", gateway.replayEpoch)
+        val catchUp = runBlocking { gateway.since("s1", 5) }
+        assertEquals(false, catchUp.truncated)
+        assertEquals("epoch-9", catchUp.epoch)
+        // PROTOCOL.md §3: epoch != stored replay_epoch → refetch via session.resume
+        // instead of trusting the replay.
+        assertTrue(catchUp.truncated || catchUp.epoch != gateway.replayEpoch)
+    }
+
+    @Test
     fun `request when not ready throws GatewayNotReadyException`() = runBlocking {
         val idleSocket = HermesSocket(client = client, scope = scope, urlProvider = { "ws://127.0.0.1:1/api/ws" })
         val gw = HermesGateway(idleSocket, scope)

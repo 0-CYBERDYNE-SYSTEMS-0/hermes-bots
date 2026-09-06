@@ -198,6 +198,11 @@ Server pushes `approval.request {request_id, command?, choices:["once","session"
   (`gateway/hosted_room_discussion.py:49` `_USER_PAYLOAD_FIELDS`, enforced by `_exact_fields`) —
   an extra `"type":"message.user"` key fails with **5112 "user payload has unknown fields: type"**
   (the type is implied for user events; see `gateway/hosted_rooms.py:51`).
+- `groups.log {room_id, since_seq=0, limit≤max_log_limit}` → monotonic room-log delta
+  `{events:[{room_id,seq,event_id,kind,actor,payload,created_at,…}]}` — the room TRANSCRIPT RPC
+  (missing from earlier drafts of this doc; the client's room view is fed by this, not
+  `groups.state`). Passthrough to `gateway.hosted_rooms.read_events`
+  (`tui_gateway/methods_groups.py:489-495`, `gateway/hosted_rooms.py:1111-1150`).
 - `groups.disband {room_id, cancel_id?}` (`398`), `groups.stop {room_id, cancel_id?}` (`431`)
 - `groups.approve {room_id, member_id, task_id, execution_generation, choice, request_id}` (`439`), `groups.retry {room_id, task_id}` (`450`)
 - Group member sessions are created with `room_plumbing:true`, hidden.
@@ -265,7 +270,7 @@ browser-flow endpoints + ticket minting.
 |---|---|
 | `GET /api/status` (public) | health + `auth_required` detection — the **first call** when adding a gateway |
 | `POST /api/auth/ws-ticket` (gated mode) | mint single-use WS ticket (30 s TTL) |
-| `GET /api/cron/jobs`, `POST /api/cron/jobs`, `PUT/DELETE /api/cron/jobs/{id}` | routines UI (`web_routers/cron.py:211-271`) — **desktop bots plugin uses REST for cron, not RPC** (`cron.tsx`) |
+| `GET /api/cron/jobs`, `POST /api/cron/jobs`, `PUT/DELETE /api/cron/jobs/{id}` | routines UI (`web_routers/cron.py:211-271`) — **desktop bots plugin uses REST for cron, not RPC** (`cron.tsx`); pause/resume are `POST /api/cron/jobs/{id}/pause` and `…/resume` (`web_routers/cron.py:251-257`) |
 | `GET /api/profiles` | legacy/simple; prefer RPC `profiles.list` (richer: sessions, ui_meta, avatar) (`web_routers/profiles.py:73-95`) |
 | `GET /api/model/options` | REST mirror of `model.options` (`programmatic-integration.md:129-140`) |
 | `/api/files/download?token=` | only route that takes `?token=` (`web_server.py:395-404`) |

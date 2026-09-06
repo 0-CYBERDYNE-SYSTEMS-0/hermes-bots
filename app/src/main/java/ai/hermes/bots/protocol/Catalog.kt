@@ -149,7 +149,9 @@ object Catalog {
     const val ACTIVE_NOW_WINDOW_MS = 90_000L
     const val RELAY_ROSTER_LOOP_MS = 60_000L
     const val RELAY_DRAIN_LOOP_MS = 30_000L
-    const val RELAY_DELIVER_TIMEOUT_MS = 1_320_000L
+    // Server budget is ~1320 s (120 s lock-wait + 600 s turn × 2); PROTOCOL.md §5.7 requires the
+    // client timeout to EXCEED it, so keep headroom above the server's worst case.
+    const val RELAY_DELIVER_TIMEOUT_MS = 1_400_000L
     const val TICKET_TTL_S = 30
     const val UI_META_MAX_BYTES = 64 * 1024
     const val MAX_AVATAR_BYTES = 2 * 1024 * 1024

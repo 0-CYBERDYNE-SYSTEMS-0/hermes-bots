@@ -199,12 +199,14 @@ class HermesSocket(
     }
 
     private fun scheduleReconnect() {
-        synchronized(lock) {
+        val delayMs = synchronized(lock) {
             if (reconnectScheduled || stopped.get()) return
             reconnectScheduled = true
+            // Delay with the CURRENT backoff first (1 s floor per PROTOCOL.md §3), then double.
+            val d = backoffMs
             backoffMs = (backoffMs * 2).coerceAtMost(backoffMaxMs)
+            d
         }
-        val delayMs = synchronized(lock) { backoffMs }
         reconnectJob = scope.launch(exceptionHandler) {
             delay(delayMs)
             synchronized(lock) { reconnectScheduled = false }

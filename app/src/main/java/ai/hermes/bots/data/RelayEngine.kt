@@ -71,30 +71,36 @@ class RelayEngine(
     }
 
     private suspend fun relayLoop(connectionId: String, conn: ConnectionLive) {
-        if (!ensureSupported(connectionId, conn)) return
+        while (true) {
+            // A gateway that isn't Ready yet is DELAYED, not unsupported: keep waiting so a
+            // slow-connecting gateway joins the loops once it comes up (only -32601 latches).
+            val ready = withTimeoutOrNull(30_000) {
+                conn.gateway.state.first { it is SocketState.Ready }
+            } != null
+            if (!ready) {
+                delay(Catalog.RELAY_ROSTER_LOOP_MS)
+                continue
+            }
+            val unsupported = try {
+                conn.gateway.request(
+                    Catalog.METHOD_BOT_RELAY_ROSTER_SYNC,
+                    buildJsonObject { put("agents", JsonArray(emptyList())) },
+                    30_000,
+                )
+                false
+            } catch (e: RpcException) {
+                e.isMethodNotFound()
+            }
+            if (unsupported) {
+                manager.markRelayUnsupported(connectionId)
+                return
+            }
+            break
+        }
         val rosterJob = scope.launch { rosterLoop(connectionId, conn) }
         val drainJob = scope.launch { drainLoop(connectionId, conn) }
         rosterJob.join()
         drainJob.join()
-    }
-
-    private suspend fun ensureSupported(connectionId: String, conn: ConnectionLive): Boolean {
-        val ready = withTimeoutOrNull(30_000) {
-            conn.gateway.state.first { it is SocketState.Ready }
-        }
-        if (ready == null) {
-            manager.markRelayUnsupported(connectionId)
-            return false
-        }
-        return try {
-            conn.gateway.request(Catalog.METHOD_BOT_RELAY_ROSTER_SYNC, buildJsonObject { put("agents", JsonArray(emptyList())) }, 30_000)
-            true
-        } catch (e: RpcException) {
-            if (e.isMethodNotFound()) {
-                manager.markRelayUnsupported(connectionId)
-                false
-            } else true // supported but errored once — keep looping
-        }
     }
 
     private suspend fun rosterLoop(connectionId: String, conn: ConnectionLive) {

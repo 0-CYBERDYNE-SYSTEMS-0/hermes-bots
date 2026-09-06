@@ -26,6 +26,13 @@ class RosterParsingTest {
     }
 
     @Test
+    fun `fractional epoch seconds last_active parses to ms`() {
+        // Server sends last_active as epoch seconds with a fraction (PROTOCOL.md §5.3).
+        val ms = RosterParsing.lastActiveMs(json.parseToJsonElement("1788676747.686302"))
+        assertEquals(1788676747686L, ms)
+    }
+
+    @Test
     fun `garbage and null last_active are null`() {
         assertNull(RosterParsing.lastActiveMs(json.parseToJsonElement("\"not-a-date\"")))
         assertNull(RosterParsing.lastActiveMs(null))

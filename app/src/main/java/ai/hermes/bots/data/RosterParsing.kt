@@ -10,8 +10,11 @@ import java.time.OffsetDateTime
 object RosterParsing {
 
     fun lastActiveMs(value: JsonElement?): Long? = when (value) {
-        is JsonPrimitive ->
-            if (value.isString) parseIso(value.content) else value.content.toLongOrNull()
+        is JsonPrimitive -> when {
+            value.isString -> parseIso(value.content)
+            // Server sends epoch SECONDS as a float (e.g. 1788676747.686); treat big integers as ms.
+            else -> value.content.toDoubleOrNull()?.let { if (it < 1e11) (it * 1000).toLong() else it.toLong() }
+        }
         else -> null
     }
 

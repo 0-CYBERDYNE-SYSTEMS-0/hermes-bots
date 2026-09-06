@@ -93,7 +93,10 @@ fun GroupChatScreen(
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(4.dp))
             }
             LazyColumn(state = listState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(ui.log, key = { it.eventId ?: it.raw.toString() }) { entry ->
+                // Control-plane events (turn.settled, room.activity, …) stay out of the user's
+                // round log — only user/member messages render (UI-SPEC §5.8: no raw protocol names).
+                val roundLog = ui.log.filter { it.kind == "message.user" || it.kind.startsWith("message.member") || it.kind == "message.agent" }
+                items(roundLog, key = { it.eventId ?: it.raw.toString() }) { entry ->
                     GroupLogItem(entry)
                 }
             }
@@ -144,7 +147,11 @@ private fun GroupLogItem(entry: ai.hermes.bots.data.GroupLogEntry) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.secondary,
                 )
-                Text(entry.text.ifBlank { "…" }, style = MaterialTheme.typography.bodyMedium)
+                // Server text is prefixed "@handle: " — the label above already says who.
+                Text(
+                    entry.actor?.let { entry.text.removePrefix("@$it: ") } ?: entry.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         else -> Text(
             entry.kind,

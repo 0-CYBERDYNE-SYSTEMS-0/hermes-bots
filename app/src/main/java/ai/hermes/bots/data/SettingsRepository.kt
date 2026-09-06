@@ -1,0 +1,90 @@
+package ai.hermes.bots.data
+
+import android.content.Context
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+private val Context.settingsStore: androidx.datastore.core.DataStore<Preferences> by preferencesDataStore(name = "settings")
+
+@Serializable
+data class NotificationEntry(
+    val botLabel: String,
+    val preview: String,
+    val sessionId: String,
+    val atMs: Long,
+)
+
+class SettingsRepository(private val context: Context) {
+    private val json = Json { ignoreUnknownKeys = true }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val keyThemeMode = stringPreferencesKey("theme_mode")
+    private val keyNotificationsEnabled = booleanPreferencesKey("notifications_enabled")
+    private val keyNotificationHistory = stringPreferencesKey("notification_history_json")
+
+    val themeMode: StateFlow<String> = context.settingsStore.data
+        .map { prefs ->
+            prefs[keyThemeMode]?.takeIf { it in THEME_MODES } ?: THEME_SYSTEM
+        }
+        .stateIn(scope, SharingStarted.Eagerly, THEME_SYSTEM)
+
+    val notificationsEnabled: StateFlow<Boolean> = context.settingsStore.data
+        .map { prefs -> prefs[keyNotificationsEnabled] ?: true }
+        .stateIn(scope, SharingStarted.Eagerly, true)
+
+    val notificationHistory: StateFlow<List<NotificationEntry>> = context.settingsStore.data
+        .map { prefs -> decodeHistory(prefs[keyNotificationHistory]) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    suspend fun setThemeMode(mode: String) {
+        if (mode !in THEME_MODES) return
+        context.settingsStore.edit { prefs -> prefs[keyThemeMode] = mode }
+    }
+
+    suspend fun setNotificationsEnabled(enabled: Boolean) {
+        context.settingsStore.edit { prefs -> prefs[keyNotificationsEnabled] = enabled }
+    }
+
+    /** Newest first, capped at HISTORY_LIMIT. In-app history records even suppressed notifications. */
+    suspend fun appendNotification(botLabel: String, preview: String, sessionId: String) {
+        context.settingsStore.edit { prefs ->
+            val entry = NotificationEntry(
+                botLabel = botLabel,
+                preview = preview,
+                sessionId = sessionId,
+                atMs = System.currentTimeMillis(),
+            )
+            val next = (listOf(entry) + decodeHistory(prefs[keyNotificationHistory])).take(HISTORY_LIMIT)
+            prefs[keyNotificationHistory] = json.encodeToString(next)
+        }
+    }
+
+    suspend fun clearNotifications() {
+        context.settingsStore.edit { prefs -> prefs[keyNotificationHistory] = "[]" }
+    }
+
+    private fun decodeHistory(text: String?): List<NotificationEntry> =
+        text?.let { runCatching { json.decodeFromString<List<NotificationEntry>>(it) }.getOrDefault(emptyList()) }
+            ?: emptyList()
+
+    companion object {
+        const val THEME_SYSTEM = "system"
+        const val THEME_DARK = "dark"
+        const val THEME_LIGHT = "light"
+        val THEME_MODES = setOf(THEME_SYSTEM, THEME_DARK, THEME_LIGHT)
+        const val HISTORY_LIMIT = 50
+    }
+}

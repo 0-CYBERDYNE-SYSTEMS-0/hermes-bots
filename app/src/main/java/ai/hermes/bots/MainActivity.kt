@@ -7,6 +7,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import ai.hermes.bots.ui.AppRoot
 import ai.hermes.bots.ui.theme.HermesBotsTheme
 
@@ -18,7 +21,14 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
         enableEdgeToEdge()
         setContent {
-            HermesBotsTheme {
+            val themeMode by (application as HermesBotsApp).graph.settings.themeMode.collectAsState()
+            HermesBotsTheme(
+                darkTheme = when (themeMode) {
+                    "dark" -> true
+                    "light" -> false
+                    else -> isSystemInDarkTheme()
+                },
+            ) {
                 AppRoot()
             }
         }

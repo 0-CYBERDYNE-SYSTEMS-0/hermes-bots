@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
@@ -57,6 +58,8 @@ import java.util.Locale
 fun RosterScreen(
     onOpenChat: (connectionId: String, botName: String) -> Unit,
     onOpenGateways: () -> Unit,
+    onOpenNotifications: () -> Unit,
+    onOpenSettings: () -> Unit,
     onOpenGroups: () -> Unit,
     onNewBot: () -> Unit,
     onEditBot: (connectionId: String, botName: String) -> Unit,
@@ -92,7 +95,7 @@ fun RosterScreen(
                     IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) search = "" }) {
                         Icon(Icons.Filled.Search, contentDescription = "Search")
                     }
-                    IconButton(onClick = { /* notifications land in Phase 4 */ }) {
+                    IconButton(onClick = onOpenNotifications) {
                         Icon(Icons.Filled.Notifications, contentDescription = "Notifications")
                     }
                     IconButton(onClick = onNewBot) {
@@ -103,6 +106,9 @@ fun RosterScreen(
                     }
                     IconButton(onClick = onOpenGateways) {
                         Icon(Icons.Filled.Settings, contentDescription = "Gateways")
+                    }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Build, contentDescription = "App settings")
                     }
                 },
             )

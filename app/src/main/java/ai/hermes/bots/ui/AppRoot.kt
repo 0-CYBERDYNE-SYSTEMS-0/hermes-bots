@@ -11,6 +11,8 @@ import ai.hermes.bots.ui.groups.GroupsScreen
 import ai.hermes.bots.ui.editor.BotEditorScreen
 import ai.hermes.bots.ui.roster.RosterScreen
 import ai.hermes.bots.ui.routines.RoutinesScreen
+import ai.hermes.bots.ui.settings.NotificationsScreen
+import ai.hermes.bots.ui.settings.SettingsScreen
 
 @Composable
 fun AppRoot() {
@@ -20,10 +22,21 @@ fun AppRoot() {
             RosterScreen(
                 onOpenChat = { connectionId, botName -> nav.navigate("chat/$connectionId/$botName") },
                 onOpenGateways = { nav.navigate("connections") },
+                onOpenNotifications = { nav.navigate("notifications") },
+                onOpenSettings = { nav.navigate("settings") },
                 onNewBot = { nav.navigate("editor") },
                 onEditBot = { connectionId, botName -> nav.navigate("editor/$connectionId/$botName") },
                 onOpenRoutines = { connectionId, botName -> nav.navigate("routines/$connectionId/$botName") },
                 onOpenGroups = { nav.navigate("groups") },
+            )
+        }
+        composable("notifications") {
+            NotificationsScreen(onBack = { nav.popBackStack() })
+        }
+        composable("settings") {
+            SettingsScreen(
+                onBack = { nav.popBackStack() },
+                onOpenGateways = { nav.navigate("connections") },
             )
         }
         composable("groups") {

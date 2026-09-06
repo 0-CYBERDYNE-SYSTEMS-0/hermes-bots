@@ -6,6 +6,7 @@ import ai.hermes.bots.data.GatewayManager
 import ai.hermes.bots.data.GroupRepository
 import ai.hermes.bots.data.RelayEngine
 import ai.hermes.bots.data.RosterRepository
+import ai.hermes.bots.data.SettingsRepository
 import ai.hermes.bots.notify.BotNotifier
 import ai.hermes.bots.protocol.Catalog
 import android.app.Activity
@@ -24,6 +25,7 @@ class AppGraph(private val app: HermesBotsApp) {
     val cron = CronRepository(gateways, scope)
     val groups = GroupRepository(gateways)
     val relay = RelayEngine(gateways, scope)
+    val settings = SettingsRepository(app)
 
     private val notifier = BotNotifier(app)
     private val notifyJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
@@ -45,16 +47,18 @@ class AppGraph(private val app: HermesBotsApp) {
                     if (notifyJobs[id] == null) {
                         notifyJobs[id] = scope.launch {
                             conn.gateway.events.collect { ev ->
-                                if (ev.type == Catalog.EVENT_MESSAGE_COMPLETE && app.activitiesInForeground == 0) {
+                                if (ev.type == Catalog.EVENT_MESSAGE_COMPLETE) {
                                     val text = (ev.payload["text"] as? kotlinx.serialization.json.JsonPrimitive)
                                         ?.takeIf { it.isString }?.content.orEmpty()
                                     if (text.isNotBlank()) {
                                         val bot = roster.roster.value.firstOrNull { it.bot.canonicalSessionId == ev.sessionId }
-                                        notifier.notifyBotMessage(
-                                            bot?.bot?.displayName ?: bot?.bot?.name ?: "Hermes Bots",
-                                            text,
-                                            ev.sessionId ?: "global",
-                                        )
+                                        val label = bot?.bot?.displayName ?: bot?.bot?.name ?: "Hermes Bots"
+                                        // In-app history records every qualifying event, even when
+                                        // the system notification is suppressed or app is foregrounded.
+                                        settings.appendNotification(label, text, ev.sessionId ?: "global")
+                                        if (app.activitiesInForeground == 0 && settings.notificationsEnabled.value) {
+                                            notifier.notifyBotMessage(label, text, ev.sessionId ?: "global")
+                                        }
                                     }
                                 }
                             }

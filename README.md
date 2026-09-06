@@ -122,8 +122,26 @@ prompt to allow inbound connections on 9119.
    `http://100.x.y.z:9119`).
 
 Auth notes: with basic auth configured, use **User + password** — the gateway rejects
-`?token=` in gated mode. If the server runs token-only (no auth provider), use the token;
-both work over Tailscale, but gated/basic is the setup the remote-bind server expects.
+`?token=` in gated mode (the app logs in with your credentials and rides the cookie session
+automatically; per-request Basic headers are not accepted by the server).
+
+### Recipe D — whole fleet on a tailnet (one gateway per Mac)
+
+For a fleet of Macs, give each machine its own tailnet-facing gateway on port **9300** with
+the bundled provisioning script. Run this **on each Mac** (or pipe it over your own SSH):
+
+```bash
+bash scripts/provision-tailnet-gateway.sh          # or: ssh user@mac 'bash -s' < scripts/provision-tailnet-gateway.sh
+```
+
+It configures gated mode (basic auth; password is generated and printed on first run),
+installs a LaunchAgent (`ai.hermes.tailnet-gateway`, keep-alive + boots on restart), and
+prints the exact URL + credentials for the app. Then add it in the app:
+Gateways → + → `http://<mac-tailnet-ip>:9300` → **User + pass** → Test → Save.
+
+Each gateway serves that machine's `~/.hermes` — its bots appear in the roster under the
+connection's own section, and the app relays messages between bots on different gateways
+automatically. See [docs/FLEET.md](docs/FLEET.md) for a per-machine runbook.
 
 ## Architecture notes
 

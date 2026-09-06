@@ -5,6 +5,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 // Brand palette — UI-SPEC.md §3 (powder blue primary, burnt orange secondary).
@@ -61,9 +63,13 @@ private val LightColors = lightColorScheme(
     onError = Color.White,
 )
 
+/** Tracks the resolved dark flag (in-app override wins over system) so non-color-scheme
+ *  accents (status dots, danger text) follow the SAME theme the user picked. */
+val LocalBrandDark = staticCompositionLocalOf { true }
+
 @Composable
 fun brandPalette(): BrandPalette =
-    if (isSystemInDarkTheme()) BrandPalette(success = Color(0xFF57AB5A), danger = Color(0xFFE5534B))
+    if (LocalBrandDark.current) BrandPalette(success = Color(0xFF57AB5A), danger = Color(0xFFE5534B))
     else BrandPalette(success = Color(0xFF3E8F4A), danger = Color(0xFFC93C37))
 
 @Composable
@@ -71,8 +77,10 @@ fun HermesBotsTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        content = content,
-    )
+    CompositionLocalProvider(LocalBrandDark provides darkTheme) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            content = content,
+        )
+    }
 }

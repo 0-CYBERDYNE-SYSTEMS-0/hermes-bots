@@ -72,6 +72,9 @@ class GroupRepository(private val manager: GatewayManager) {
         val result = gateway(connectionId).request(
             Catalog.METHOD_GROUPS_CREATE,
             buildJsonObject {
+                // Server (v0.21.0) rejects a missing room_id with 4110 ("room_id must be a string"),
+                // so we generate one client-side like the desktop does; create is idempotent on it.
+                put("room_id", UUID.randomUUID().toString())
                 put("name", name)
                 put("members", JsonArray(members.map { it.toParams() }))
             },
@@ -89,7 +92,17 @@ class GroupRepository(private val manager: GatewayManager) {
             buildJsonObject { put("room_id", roomId) },
         )
         val room = (result["room"] as? JsonObject)?.let { parseRoomPublic(connectionId, it) }
-        val log = (result["room"]?.let { (it as? JsonObject) }?.get("log") as? JsonArray)
+        // groups.state carries no transcript — the room log lives behind groups.log
+        // (methods_groups.py:489 passthrough to gateway.hosted_rooms.read_events).
+        val logResult = gateway(connectionId).request(
+            Catalog.METHOD_GROUPS_LOG,
+            buildJsonObject {
+                put("room_id", roomId)
+                put("since_seq", 0)
+                put("limit", 100)
+            },
+        )
+        val log = (logResult["events"] as? JsonArray)
             ?.mapNotNull { parseLogEntryPublic(it) }
             .orEmpty()
         return room to log
@@ -104,7 +117,8 @@ class GroupRepository(private val manager: GatewayManager) {
                 put(
                     "payload",
                     buildJsonObject {
-                        put("type", "message.user")
+                        // Server (v0.21.0) validates user payloads with EXACT fields {text, thread_id}
+                        // (gateway/hosted_room_discussion.py:49) — a "type" key fails with 5112.
                         put("text", text)
                         put("thread_id", "main")
                     },
@@ -184,7 +198,8 @@ class GroupRepository(private val manager: GatewayManager) {
             val o = element as? JsonObject ?: return null
             val kind = str(o, "type") ?: str(o, "kind") ?: return null
             val actor = when (val a = o["actor"]) {
-                is JsonObject -> str(a, "kind") ?: str(a, "id")
+                is JsonObject -> str(a, "display_name") ?: str(a, "profile")
+                    ?: str(a, "kind") ?: str(a, "id")
                 is JsonPrimitive -> if (a.isString) a.content else null
                 else -> null
             }

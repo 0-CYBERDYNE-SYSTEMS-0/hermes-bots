@@ -186,9 +186,18 @@ Server pushes `approval.request {request_id, command?, choices:["once","session"
 `tui_gateway/methods_groups.py`:
 - `groups.capabilities` → `{protocol_version, driver, authority_gateway_id, room_link, features, methods, max_log_limit}` (`218-247`)
 - `groups.list {limit,offset,include_disbanded}` → `{rooms,next_offset}` (`346`)
-- `groups.create {room_id?, name, members}` → `{room}` (idempotent) (`359`)
+- `groups.create {room_id?, name, members}` → `{room}` (idempotent) (`359`). **Runtime finding
+  (v0.21.0): `room_id` is effectively REQUIRED** — the handler passes it through
+  (`methods_groups.py:365`) and `create_room` validates it as a string even when absent
+  (`gateway/hosted_rooms.py:835` → `gateway/hosted_rooms_common.py:27-28`), so omitting it
+  fails with **4110 "room_id must be a string"**. Clients must generate one (e.g. UUID);
+  the desktop always does.
 - `groups.state {room_id}` → `{room, driver_status?}` (`369`)
-- `groups.send {room_id, event_id?, payload}` → `{event, client_event_id, accepted, driver_started}` (`383`)
+- `groups.send {room_id, event_id?, payload}` → `{event, client_event_id, accepted, driver_started}` (`383`).
+  **Runtime finding (v0.21.0): the user-event payload must be EXACTLY `{text, thread_id}`**
+  (`gateway/hosted_room_discussion.py:49` `_USER_PAYLOAD_FIELDS`, enforced by `_exact_fields`) —
+  an extra `"type":"message.user"` key fails with **5112 "user payload has unknown fields: type"**
+  (the type is implied for user events; see `gateway/hosted_rooms.py:51`).
 - `groups.disband {room_id, cancel_id?}` (`398`), `groups.stop {room_id, cancel_id?}` (`431`)
 - `groups.approve {room_id, member_id, task_id, execution_generation, choice, request_id}` (`439`), `groups.retry {room_id, task_id}` (`450`)
 - Group member sessions are created with `room_plumbing:true`, hidden.

@@ -46,6 +46,7 @@ object Catalog {
     const val METHOD_GROUPS_LIST = "groups.list"
     const val METHOD_GROUPS_CREATE = "groups.create"
     const val METHOD_GROUPS_STATE = "groups.state"
+    const val METHOD_GROUPS_LOG = "groups.log"
     const val METHOD_GROUPS_SEND = "groups.send"
     const val METHOD_GROUPS_DISBAND = "groups.disband"
     const val METHOD_GROUPS_STOP = "groups.stop"

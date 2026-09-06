@@ -62,6 +62,12 @@ class CronGroupTest {
             json.parseToJsonElement("""{"kind":"message.member","actor":"alf","payload":{"text":"yo"}}""").jsonObject,
         )!!
         assertEquals("alf", e2.actor)
+        val e3 = GroupRepository.parseLogEntryForTest(
+            json.parseToJsonElement(
+                """{"kind":"message.member","actor":{"kind":"member","id":"default","profile":"default","display_name":"default"},"payload":{"text":"@default: hi"}}""",
+            ).jsonObject,
+        )!!
+        assertEquals("default", e3.actor)
     }
 
     @Test

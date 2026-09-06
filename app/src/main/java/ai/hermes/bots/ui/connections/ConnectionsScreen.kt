@@ -100,6 +100,12 @@ fun ConnectionsScreen(onBack: () -> Unit, vm: ConnectionsViewModel = viewModel()
     if (adding || editing != null) {
         ConnectionEditDialog(
             initial = editing,
+            canSetPrimary = editing?.primary == false,
+            onSetPrimary = {
+                editing?.let { vm.setPrimary(it.id) }
+                adding = false
+                editing = null
+            },
             onDismiss = { adding = false; editing = null },
             onSave = { record ->
                 vm.upsert(record)
@@ -186,6 +192,8 @@ private fun onSetPrimaryNoop() = Unit
 @Composable
 private fun ConnectionEditDialog(
     initial: ConnectionRecord?,
+    canSetPrimary: Boolean,
+    onSetPrimary: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (ConnectionRecord) -> Unit,
     onDelete: (String) -> Unit,
@@ -251,6 +259,9 @@ private fun ConnectionEditDialog(
                             color = if (probe.reachable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                         )
                     }
+                }
+                if (canSetPrimary) {
+                    TextButton(onClick = onSetPrimary) { Text("Set as primary") }
                 }
                 if (initial != null) {
                     TextButton(onClick = { onDelete(initial.id) }) {

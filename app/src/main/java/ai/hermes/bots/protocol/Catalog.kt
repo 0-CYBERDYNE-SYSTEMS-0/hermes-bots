@@ -106,6 +106,10 @@ object Catalog {
     // --- REST (PROTOCOL.md §7) ---
     const val REST_STATUS = "/api/status"
     const val REST_WS_TICKET = "/api/auth/ws-ticket"
+    // Gated-mode session bootstrap (server: dashboard_auth/routes.py) — the ticket route is
+    // cookie-gated, so BasicAuth connections log in first and ride the session cookie.
+    const val REST_AUTH_PROVIDERS = "/api/auth/providers"
+    const val REST_PASSWORD_LOGIN = "/auth/password-login"
     const val REST_CRON_JOBS = "/api/cron/jobs"
     const val REST_CRON_JOB = "/api/cron/jobs/%s"
     const val REST_MODEL_OPTIONS = "/api/model/options"

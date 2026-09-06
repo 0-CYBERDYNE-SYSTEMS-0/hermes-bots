@@ -2,6 +2,7 @@ package ai.hermes.bots.data
 
 import ai.hermes.bots.protocol.Auth
 import ai.hermes.bots.protocol.Catalog
+import ai.hermes.bots.protocol.GatewayAuth
 import ai.hermes.bots.protocol.ProtocolException
 import ai.hermes.bots.protocol.SocketState
 import kotlinx.coroutines.CoroutineScope
@@ -45,7 +46,7 @@ class CronRepository(
     private val manager: GatewayManager,
     private val scope: CoroutineScope,
 ) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder().cookieJar(Auth.COOKIE_JAR).build()
     private val json = Json { ignoreUnknownKeys = true }
 
     private val _jobs = MutableStateFlow<Map<String, List<CronJob>>>(emptyMap())
@@ -136,23 +137,33 @@ class CronRepository(
 
     private suspend fun call(record: ConnectionRecord, method: String, path: String, body: String?): JsonElement =
         withContext(Dispatchers.IO) {
-            val builder = Request.Builder()
-                .url(record.baseUrl + path)
-                .method(method, if (body != null) body.toRequestBody("application/json".toMediaType()) else null)
-            Auth.restHeaders(record.auth).forEach { (k, v) -> builder.header(k, v) }
-            try {
+            val attempt = {
+                val builder = Request.Builder()
+                    .url(record.baseUrl + path)
+                    .method(method, if (body != null) body.toRequestBody("application/json".toMediaType()) else null)
+                Auth.restHeaders(record.auth).forEach { (k, v) -> builder.header(k, v) }
                 client.newCall(builder.build()).execute().use { resp ->
                     val text = resp.body?.string().orEmpty()
                     if (!resp.isSuccessful) throw ProtocolException("cron $method $path -> ${resp.code}: ${text.take(200)}")
-                    if (text.isBlank()) return@use JsonObject(emptyMap())
-                    json.parseToJsonElement(text)
+                    if (text.isBlank()) JsonObject(emptyMap()) else json.parseToJsonElement(text)
                 }
+            }
+            try {
+                attempt()
             } catch (e: ProtocolException) {
-                throw e
+                // Gated (BasicAuth) gateways answer 401 when the cookie session expired —
+                // re-login once and retry (the ws-ticket path does the same in Auth.mintTicket).
+                val gatedRetry = (resp401or403(e)) && record.auth is GatewayAuth.BasicAuth
+                if (!gatedRetry) throw e
+                Auth.ensureGatedSession(client, record.baseUrl, record.auth as GatewayAuth.BasicAuth)
+                attempt()
             } catch (e: Exception) {
                 throw ProtocolException("cron $method $path failed: ${e.message}")
             }
         }
+
+    private fun resp401or403(e: ProtocolException): Boolean =
+        e.message?.contains("-> 401") == true || e.message?.contains("-> 403") == true
 
     companion object {
         fun parseJob(connectionId: String, element: JsonElement): CronJob? {

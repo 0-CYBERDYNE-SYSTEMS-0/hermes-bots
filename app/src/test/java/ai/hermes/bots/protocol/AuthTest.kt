@@ -82,13 +82,34 @@ class AuthTest {
     }
 
     @Test
-    fun `mintTicket error response throws ProtocolException`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"detail":"bad"}"""))
+    fun `mintTicket relogs in after 401 and retries`() = runBlocking {
+        // Gated gateways reject the first ticket call until the cookie session exists
+        // (PROTOCOL.md §2 runtime finding): 401 → providers → password-login → ticket.
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"detail":"no_cookie"}"""))
+        server.enqueue(MockResponse().setBody(
+            """{"providers":[{"name":"basic","display_name":"Basic","supports_password":true}]}"""))
+        server.enqueue(MockResponse().setBody("""{"ok":true,"next":"/"}"""))
+        server.enqueue(MockResponse().setBody("""{"ticket":"TICKET-2"}"""))
+        val ticket = Auth.mintTicket(client, baseUrl(), GatewayAuth.BasicAuth("u", "p"))
+        assertEquals("TICKET-2", ticket)
+        server.takeRequest() // ticket #1 (401)
+        val providersReq = server.takeRequest()
+        assertEquals("/api/auth/providers", providersReq.path)
+        val loginReq = server.takeRequest()
+        assertEquals("/auth/password-login", loginReq.path)
+        assertTrue(loginReq.body.readUtf8().contains("\"provider\":\"basic\""))
+        val ticketReq = server.takeRequest()
+        assertEquals("/api/auth/ws-ticket", ticketReq.path)
+    }
+
+    @Test
+    fun `mintTicket non-auth error passes through`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(500).setBody("""{"detail":"boom"}"""))
         try {
             Auth.mintTicket(client, baseUrl(), GatewayAuth.BasicAuth("u", "p"))
             failHard("expected ProtocolException")
         } catch (e: ProtocolException) {
-            assertTrue(e.message!!.startsWith("ws-ticket 401"))
+            assertTrue(e.message!!.startsWith("ws-ticket 500"))
         }
     }
 

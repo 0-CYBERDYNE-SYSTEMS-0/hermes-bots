@@ -25,7 +25,7 @@ class GatewayManager(
     private val repo: ConnectionRepository,
     private val scope: CoroutineScope,
 ) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder().cookieJar(Auth.COOKIE_JAR).build()
 
     private val _live = MutableStateFlow<Map<String, ConnectionLive>>(emptyMap())
     val live: StateFlow<Map<String, ConnectionLive>> = _live

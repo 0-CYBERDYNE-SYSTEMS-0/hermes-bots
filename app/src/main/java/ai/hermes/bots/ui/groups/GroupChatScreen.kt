@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -12,36 +13,32 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +67,7 @@ fun GroupChatScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 title = {
                     Column {
                         Text(roomName)
@@ -88,7 +86,7 @@ fun GroupChatScreen(
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 8.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).imePadding().padding(horizontal = ai.hermes.bots.ui.theme.Dimens.GutterChat)) {
             ui.error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(4.dp))
             }
@@ -100,64 +98,68 @@ fun GroupChatScreen(
                     GroupLogItem(entry)
                 }
             }
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message the group") },
-                    maxLines = 4,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = {
-                        if (draft.isNotBlank()) {
-                            vm.send(draft)
-                            draft = ""
-                        }
-                    }),
-                )
-                IconButton(onClick = {
-                    if (draft.isNotBlank()) {
-                        vm.send(draft)
-                        draft = ""
-                    }
-                }) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.primary)
-                }
-            }
+            ai.hermes.bots.ui.components.ChatComposer(
+                value = draft,
+                onValueChange = { draft = it },
+                placeholder = "Message the group",
+                streaming = false,
+                onSend = {
+                    vm.send(draft)
+                    draft = ""
+                },
+                onSteer = {},
+                onInterrupt = {},
+                modifier = Modifier.padding(vertical = 6.dp),
+            )
         }
     }
 }
 
 @Composable
 private fun GroupLogItem(entry: ai.hermes.bots.data.GroupLogEntry) {
+    val maxBubbleWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp * 0.86f).dp
     when {
         entry.kind == "message.user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.large) {
-                Text(entry.text, modifier = Modifier.padding(10.dp).widthIn(max = 300.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = ai.hermes.bots.ui.components.UserBubbleShape,
+            ) {
+                Text(
+                    entry.text,
+                    modifier = Modifier
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .widthIn(max = maxBubbleWidth),
+                )
             }
         }
-        entry.kind == "message.member" || entry.kind == "message.agent" ->
-            Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                Text(
-                    entry.actor ?: "bot",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-                // Server text is prefixed "@handle: " — the label above already says who.
-                Text(
-                    entry.actor?.let { entry.text.removePrefix("@$it: ") } ?: entry.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+        // Member message = 28 dp blobatar gutter + soft container (A19); name is quiet gray.
+        entry.kind == "message.member" || entry.kind == "message.agent" -> {
+            val actor = entry.actor ?: "bot"
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ai.hermes.bots.ui.components.FaceAvatar(actor, 28.dp)
+                Column {
+                    Text(
+                        actor,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = ai.hermes.bots.ui.components.AssistantBubbleShape,
+                        modifier = Modifier.padding(top = 2.dp),
+                    ) {
+                        // Server text is prefixed "@handle: " — the label above already says who.
+                        Text(
+                            entry.actor?.let { entry.text.removePrefix("@$it: ") } ?: entry.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .widthIn(max = maxBubbleWidth),
+                        )
+                    }
+                }
             }
-        else -> Text(
-            entry.kind,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-        )
+        }
+        // Unknown/control kinds never render raw protocol strings (A19).
     }
 }

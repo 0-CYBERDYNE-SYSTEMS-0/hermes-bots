@@ -3,10 +3,12 @@ package ai.hermes.bots.ui.roster
 import ai.hermes.bots.data.AvatarImage
 import ai.hermes.bots.data.RosterEntry
 import ai.hermes.bots.ui.components.FaceAvatar
+import ai.hermes.bots.ui.components.PulsingDot
+import ai.hermes.bots.ui.theme.Dimens
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,21 +16,31 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,21 +49,28 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Locale
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,11 +87,13 @@ fun RosterScreen(
 ) {
     val roster by vm.roster.collectAsState()
     val avatars by vm.avatars.collectAsState()
+    val hasNotifications by vm.hasNotifications.collectAsState()
     var search by remember { mutableStateOf("") }
-    var searchOpen by remember { mutableStateOf(false) }
     var showHidden by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
     var sheetFor by remember { mutableStateOf<RosterEntry?>(null) }
     var sectionFor by remember { mutableStateOf<RosterEntry?>(null) }
+    val searchFocus = remember { FocusRequester() }
 
     val hiddenCount = roster.count { it.bot.hidden }
     val query = search.trim().lowercase(Locale.ROOT)
@@ -91,60 +112,138 @@ fun RosterScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Bots") },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 actions = {
-                    IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) search = "" }) {
+                    IconButton(onClick = { searchFocus.requestFocus() }) {
                         Icon(Icons.Filled.Search, contentDescription = "Search")
                     }
                     IconButton(onClick = onOpenNotifications) {
-                        Icon(Icons.Filled.Notifications, contentDescription = "Notifications")
+                        BadgedBox(
+                            badge = { if (hasNotifications) Badge() },
+                        ) {
+                            Icon(Icons.Filled.Notifications, contentDescription = "Notifications")
+                        }
                     }
                     IconButton(onClick = onNewBot) {
                         Icon(Icons.Filled.Add, contentDescription = "New bot")
                     }
-                    IconButton(onClick = onOpenGroups) {
-                        Icon(Icons.Filled.Info, contentDescription = "Groups")
+                    IconButton(onClick = { menu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "More options")
                     }
-                    IconButton(onClick = onOpenGateways) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Gateways")
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Build, contentDescription = "App settings")
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Group chats") },
+                            onClick = { menu = false; onOpenGroups() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Gateways") },
+                            onClick = { menu = false; onOpenGateways() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("App settings") },
+                            onClick = { menu = false; onOpenSettings() },
+                        )
                     }
                 },
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
-            if (searchOpen) {
-                OutlinedTextField(
-                    value = search,
-                    onValueChange = { search = it },
-                    label = { Text("Search bots") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-            }
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = Dimens.GutterScreen)) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .heightIn(min = 40.dp),
             ) {
-                val active = roster.filter { it.activeNow }
-                if (active.isNotEmpty()) {
-                    Text("Active now", style = MaterialTheme.typography.labelMedium)
-                    active.forEach { entry ->
-                        Box(
-                            Modifier
-                                .size(34.dp)
-                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                                .padding(2.dp),
-                        ) {
-                            FaceAvatar(entry.bot.name, 28.dp, real = avatars[avatarKey(entry.bot)])
+                Row(
+                    Modifier.padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    BasicTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(searchFocus)
+                            .padding(vertical = 10.dp),
+                        decorationBox = { inner ->
+                            androidx.compose.foundation.layout.Box {
+                                if (search.isEmpty()) {
+                                    Text(
+                                        "Search bots and group chats",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                }
+            }
+            val active = roster.filter { it.activeNow }
+            if (active.isNotEmpty()) {
+                Column(Modifier.fillMaxWidth()) {
+                    Text(
+                        "Active now",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
+                        active.forEach { entry ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(MaterialTheme.shapes.medium)
+                                    .clickable {
+                                        vm.markRead(entry.bot.connectionId, entry.bot.name)
+                                        onOpenChat(entry.bot.connectionId, entry.bot.name)
+                                    }
+                                    .padding(4.dp),
+                            ) {
+                                Box {
+                                    FaceAvatar(entry.bot.name, 56.dp, real = avatars[avatarKey(entry.bot)])
+                                    PulsingDot(
+                                        dotSize = 12.dp,
+                                        borderColor = MaterialTheme.colorScheme.background,
+                                        modifier = Modifier.align(Alignment.BottomEnd),
+                                    )
+                                }
+                                Text(
+                                    entry.bot.displayName ?: entry.bot.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.width(64.dp),
+                                )
+                            }
                         }
                     }
                 }
-                Spacer(Modifier.weight(1f))
-                if (hiddenCount > 0) {
+            }
+            if (hiddenCount > 0) {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
                     FilterChip(
                         selected = showHidden,
                         onClick = { showHidden = !showHidden },
@@ -153,24 +252,48 @@ fun RosterScreen(
                 }
             }
             if (visible.isEmpty()) {
-                Text(
-                    if (showHidden) "No hidden bots" else "No bots yet — add or check Gateways",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(8.dp),
-                )
+                if (showHidden) {
+                    Text(
+                        "No hidden bots",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(8.dp),
+                    )
+                } else {
+                    ai.hermes.bots.ui.components.EmptyState(
+                        title = "No bots yet",
+                        body = "Add one, or check Gateways.",
+                        avatar = {
+                            androidx.compose.foundation.layout.Box(Modifier.size(96.dp)) {
+                                ai.hermes.bots.ui.components.FaceAvatar(
+                                    "hermes-roster-a",
+                                    56.dp,
+                                    modifier = Modifier.align(Alignment.CenterStart),
+                                )
+                                ai.hermes.bots.ui.components.FaceAvatar(
+                                    "hermes-roster-b",
+                                    56.dp,
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
+                                ai.hermes.bots.ui.components.FaceAvatar(
+                                    "hermes-roster-c",
+                                    56.dp,
+                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                )
+                            }
+                        },
+                    )
+                }
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 sections.forEach { (sectionId, entries) ->
                     item(key = "header-${sectionId ?: "_"}") {
-                        Text(
+                        ai.hermes.bots.ui.components.SectionHeader(
                             sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
                         )
                     }
                     itemsIndexed(entries, key = { _, e -> "${e.bot.connectionId}:${e.bot.name}" }) { _, entry ->
                         BotRowItem(
+                            modifier = Modifier.animateItem(),
                             entry = entry,
                             avatar = avatars[avatarKey(entry.bot)],
                             onClick = {
@@ -188,20 +311,47 @@ fun RosterScreen(
     sheetFor?.let { entry ->
         ModalBottomSheet(onDismissRequest = { sheetFor = null }) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                // Identity header — which bot am I acting on? (A23)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(bottom = 8.dp),
+                ) {
+                    FaceAvatar(
+                        entry.bot.displayName ?: entry.bot.name,
+                        40.dp,
+                        real = avatars[avatarKey(entry.bot)],
+                    )
+                    Column {
+                        Text(
+                            entry.bot.displayName ?: entry.bot.name,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            entry.bot.sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 ListItem(
                     headlineContent = { Text("Routines") },
+                    leadingContent = { Icon(Icons.Filled.DateRange, contentDescription = null) },
                     modifier = Modifier.clickable { sheetFor = null; onOpenRoutines(entry.bot.connectionId, entry.bot.name) },
                 )
                 ListItem(
                     headlineContent = { Text("Edit bot") },
+                    leadingContent = { Icon(Icons.Filled.Edit, contentDescription = null) },
                     modifier = Modifier.clickable { sheetFor = null; onEditBot(entry.bot.connectionId, entry.bot.name) },
                 )
                 ListItem(
                     headlineContent = { Text(if (entry.bot.hidden) "Unhide" else "Hide") },
+                    leadingContent = { Icon(Icons.Filled.Clear, contentDescription = null) },
                     modifier = Modifier.clickable { vm.setHidden(entry.bot.connectionId, entry.bot.name, !entry.bot.hidden); sheetFor = null },
                 )
                 ListItem(
                     headlineContent = { Text("Move to section…") },
+                    leadingContent = { Icon(Icons.Filled.List, contentDescription = null) },
                     modifier = Modifier.clickable { sectionFor = entry; sheetFor = null },
                 )
             }
@@ -214,7 +364,7 @@ fun RosterScreen(
             onDismissRequest = { sectionFor = null },
             title = { Text("Move to section") },
             text = {
-                OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Section id (blank = Bots)") }, singleLine = true)
+                OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Section name (leave blank for Bots)") }, singleLine = true)
             },
             confirmButton = {
                 TextButton(onClick = { vm.setSection(entry.bot.connectionId, entry.bot.name, text.trim()); sectionFor = null }) { Text("Move") }
@@ -228,10 +378,16 @@ private fun avatarKey(bot: ai.hermes.bots.data.BotRow): String = "${bot.connecti
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun BotRowItem(
+    entry: RosterEntry,
+    avatar: AvatarImage?,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val bot = entry.bot
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -244,35 +400,35 @@ private fun BotRowItem(entry: RosterEntry, avatar: AvatarImage?, onClick: () -> 
                 Box(
                     Modifier
                         .align(Alignment.TopEnd)
-                        .size(10.dp)
+                        .size(8.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.secondary),
                 )
             }
-            Box(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .size(12.dp)
-                    .clip(CircleShape)
-                    .background(if (entry.activeNow) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface)
-                    .border(
-                        width = 1.5.dp,
-                        color = if (entry.activeNow) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        shape = CircleShape,
-                    ),
-            )
+            // Presence lives ON the avatar (A3): working = pulsing orange dot; idle = nothing.
+            if (entry.activeNow) {
+                PulsingDot(
+                    dotSize = 12.dp,
+                    borderColor = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                )
+            }
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 bot.displayName ?: bot.name,
                 style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
-                (bot.lastPreview ?: bot.description ?: bot.model ?: "").replace('*', ' ').replace('`', '\''),
+                (bot.lastPreview ?: bot.description ?: "Tap to start the conversation")
+                    .replace('*', ' ').replace('`', '\''),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (entry.unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         Column(horizontalAlignment = Alignment.End) {

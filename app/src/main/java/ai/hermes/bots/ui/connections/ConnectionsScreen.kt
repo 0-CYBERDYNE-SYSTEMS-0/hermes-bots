@@ -4,16 +4,15 @@ import ai.hermes.bots.data.ConnectionRecord
 import ai.hermes.bots.protocol.GatewayAuth
 import ai.hermes.bots.protocol.GatewayProbe
 import ai.hermes.bots.protocol.SocketState
+import ai.hermes.bots.ui.theme.Dimens
 import ai.hermes.bots.ui.theme.brandPalette
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,9 +23,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -39,19 +39,23 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,6 +68,7 @@ fun ConnectionsScreen(onBack: () -> Unit, vm: ConnectionsViewModel = viewModel()
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 title = { Text("Gateways") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -83,16 +88,24 @@ fun ConnectionsScreen(onBack: () -> Unit, vm: ConnectionsViewModel = viewModel()
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = Dimens.GutterScreen),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(connections, key = { it.id }) { conn ->
-                ConnectionCard(
-                    record = conn,
-                    state = socketStates[conn.id] ?: SocketState.Idle,
-                    onEdit = { editing = conn },
-                    onSetPrimary = { vm.setPrimary(conn.id) },
+                val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
+                val scale by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = if (pressed) 0.98f else 1f,
+                    label = "press-scale",
                 )
+                Box(Modifier.graphicsLayer { scaleX = scale; scaleY = scale }) {
+                    ConnectionCard(
+                        record = conn,
+                        state = socketStates[conn.id] ?: SocketState.Idle,
+                        onEdit = { editing = conn },
+                        onSetPrimary = { vm.setPrimary(conn.id) },
+                    )
+                }
             }
         }
     }
@@ -130,64 +143,58 @@ private fun ConnectionCard(
     onSetPrimary: () -> Unit,
 ) {
     Card(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .padding(end = 8.dp)
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when (state) {
-                                is SocketState.Ready -> brandPalette().success
-                                is SocketState.Connecting -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.error
-                            },
-                        ),
-                )
-                Text(record.label, style = MaterialTheme.typography.titleMedium)
-                if (record.primary) {
-                    Spacer(Modifier.padding(start = 4.dp))
-                    Icon(Icons.Filled.Star, contentDescription = "Primary", tint = MaterialTheme.colorScheme.secondary)
+        Row(
+            Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(
+                        when (state) {
+                            is SocketState.Ready -> brandPalette().success
+                            is SocketState.Connecting -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.error
+                        },
+                    ),
+            )
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(record.label, style = MaterialTheme.typography.titleMedium)
+                    if (record.primary) {
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = "Primary",
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
-                Spacer(Modifier.weight(1f))
-                StateChip(state)
+                Text(
+                    when (state) {
+                        is SocketState.Ready -> "Connected"
+                        is SocketState.Connecting -> "Connecting…"
+                        is SocketState.Disconnected -> "Offline — couldn't reach gateway"
+                        SocketState.Idle -> "Offline"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when (state) {
+                        is SocketState.Ready -> brandPalette().success
+                        is SocketState.Connecting -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> MaterialTheme.colorScheme.error
+                    },
+                )
             }
-            Text(record.baseUrl, style = MaterialTheme.typography.bodySmall)
-            val authLabel = when (val auth = record.auth) {
-                is GatewayAuth.TokenAuth -> "token auth"
-                is GatewayAuth.BasicAuth -> "basic auth (${auth.username})"
-            }
-            Text(authLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                when (state) {
-                    is SocketState.Ready -> "connected"
-                    is SocketState.Connecting -> "connecting…"
-                    is SocketState.Disconnected -> "disconnected: ${state.detail}"
-                    SocketState.Idle -> "idle"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = when (state) {
-                    is SocketState.Ready -> MaterialTheme.colorScheme.primary
-                    is SocketState.Connecting -> MaterialTheme.colorScheme.onSurfaceVariant
-                    else -> MaterialTheme.colorScheme.error
-                },
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
-
-@Composable
-private fun StateChip(state: SocketState) {
-    val (label, selected) = when (state) {
-        is SocketState.Ready -> "READY" to true
-        is SocketState.Connecting -> "…" to false
-        else -> "OFF" to false
-    }
-    AssistChip(onClick = ::onSetPrimaryNoop, label = { Text(label) })
-}
-
-private fun onSetPrimaryNoop() = Unit
 
 @Composable
 private fun ConnectionEditDialog(
@@ -224,7 +231,13 @@ private fun ConnectionEditDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("Label") }, singleLine = true)
-                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it; probeResult = null }, label = { Text("Base URL (host[:port] or full URL)") }, singleLine = true)
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it; probeResult = null },
+                    label = { Text("Address") },
+                    supportingText = { Text("e.g. 100.x.y.z:9300 or https://name.ts.net") },
+                    singleLine = true,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = !useBasic, onClick = { useBasic = false }, label = { Text("Token") })
                     FilterChip(selected = useBasic, onClick = { useBasic = true }, label = { Text("User + pass") })
@@ -233,7 +246,13 @@ private fun ConnectionEditDialog(
                     OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, singleLine = true)
                     OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, singleLine = true)
                 } else {
-                    OutlinedTextField(value = token, onValueChange = { token = it; probeResult = null }, label = { Text("Session token (HERMES_DASHBOARD_SESSION_TOKEN)") }, singleLine = true)
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it; probeResult = null },
+                        label = { Text("Session token") },
+                        supportingText = { Text("The dashboard token your gateway was started with") },
+                        singleLine = true,
+                    )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
@@ -249,15 +268,28 @@ private fun ConnectionEditDialog(
                         enabled = !probing && baseUrl.isNotBlank(),
                     ) { Text(if (probing) "Testing…" else "Test") }
                     probeResult?.let { probe ->
-                        Text(
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             if (probe.reachable) {
-                                "reachable · auth_required=${probe.authRequired} · v${probe.version ?: "?"}"
+                                Icon(
+                                    Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = brandPalette().success,
+                                )
+                                Text(
+                                    "Reachable · Hermes v${probe.version ?: "?"}" +
+                                        if (probe.authRequired == true) " · sign-in required" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = brandPalette().success,
+                                )
                             } else {
-                                "unreachable: ${probe.error ?: "unknown"}"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (probe.reachable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                        )
+                                Text(
+                                    "Couldn't reach it: ${probe.error ?: "unknown"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
                     }
                 }
                 if (canSetPrimary) {

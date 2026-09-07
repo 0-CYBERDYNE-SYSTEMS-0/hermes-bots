@@ -1,12 +1,14 @@
 package ai.hermes.bots.ui.groups
 
 import ai.hermes.bots.data.RosterEntry
+import ai.hermes.bots.ui.theme.Dimens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -24,24 +26,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +74,7 @@ fun GroupsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 title = { Text("Group chats") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
@@ -84,7 +92,7 @@ fun GroupsScreen(
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = Dimens.GutterScreen)) {
             if (ui.loading) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
                     CircularProgressIndicator()
@@ -93,35 +101,83 @@ fun GroupsScreen(
             }
             ui.caps?.let { caps ->
                 if (!caps.supported) {
-                    Text(
-                        "This gateway doesn't support hosted group chats (groups.* RPCs missing).",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp),
+                    // Designed empty, no protocol jargon (A17).
+                    ai.hermes.bots.ui.components.EmptyState(
+                        title = "This gateway can't host group chats yet",
+                        body = "Update Hermes on ${ui.connectionLabel} to enable them.",
+                        avatar = {
+                            androidx.compose.foundation.layout.Box(Modifier.size(72.dp)) {
+                                ai.hermes.bots.ui.components.FaceAvatar(
+                                    "hermes-noor",
+                                    56.dp,
+                                    modifier = Modifier.align(Alignment.CenterStart),
+                                )
+                                ai.hermes.bots.ui.components.FaceAvatar(
+                                    "hermes-aqua",
+                                    56.dp,
+                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                )
+                            }
+                        },
                     )
                     return@Column
                 }
-                Text(
-                    "${ui.connectionLabel} · protocol ${caps.protocolVersion}" + if (caps.driverReady) "" else " · driver stopped",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
+                if (!caps.driverReady) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ai.hermes.bots.ui.components.PulsingDot(dotSize = 8.dp)
+                            Text(
+                                "Group driver isn't running on this gateway.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                        }
+                    }
+                }
             }
             val active = ui.rooms.filter { !it.disbanded }
             if (active.isEmpty()) {
-                Text(
-                    "No group chats yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(16.dp),
+                ai.hermes.bots.ui.components.EmptyState(
+                    title = "Bring bots together",
+                    body = "Group chats run in hosted rounds on a gateway.",
+                    avatar = {
+                        androidx.compose.foundation.layout.Box(Modifier.size(72.dp)) {
+                            ai.hermes.bots.ui.components.FaceAvatar(
+                                "hermes-noor",
+                                56.dp,
+                                modifier = Modifier.align(Alignment.CenterStart),
+                            )
+                            ai.hermes.bots.ui.components.FaceAvatar(
+                                "hermes-aqua",
+                                56.dp,
+                                modifier = Modifier.align(Alignment.CenterEnd),
+                            )
+                        }
+                    },
                 )
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(active, key = { it.roomId }) { room ->
+                    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                    val pressed by interaction.collectIsPressedAsState()
+                    val scale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (pressed) 0.98f else 1f,
+                        label = "press-scale",
+                    )
                     Card(
                         onClick = { onOpenRoom(room.connectionId, room.roomId, room.name) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { scaleX = scale; scaleY = scale },
+                        interactionSource = interaction,
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(room.name, style = MaterialTheme.typography.titleSmall)

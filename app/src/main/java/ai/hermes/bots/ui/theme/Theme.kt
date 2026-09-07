@@ -1,13 +1,55 @@
 package ai.hermes.bots.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/**
+ * Brand type scale (audit A9): hierarchy from weight + size, default font family.
+ * Metadata/time styles carry tabular figures ("tnum") so clocks don't jitter.
+ */
+private val AppTypography = Typography(
+  titleLarge = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, lineHeight = 28.sp),
+  titleMedium = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 24.sp),
+  titleSmall = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp),
+  bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+  bodyMedium = TextStyle(fontSize = 15.sp, lineHeight = 21.sp),
+  bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
+  labelLarge = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
+  labelMedium = TextStyle(
+    fontSize = 12.sp,
+    fontWeight = FontWeight.Medium,
+    lineHeight = 16.sp,
+    fontFeatureSettings = "tnum",
+  ),
+  labelSmall = TextStyle(
+    fontSize = 11.sp,
+    fontWeight = FontWeight.Medium,
+    lineHeight = 15.sp,
+    fontFeatureSettings = "tnum",
+  ),
+)
+
+/** Shape scale (audit A10): bubbles/composer roundest, cards 16, chips 12, badges 8. */
+private val AppShapes = Shapes(
+  extraSmall = RoundedCornerShape(8.dp),
+  small = RoundedCornerShape(12.dp),
+  medium = RoundedCornerShape(16.dp),
+  large = RoundedCornerShape(20.dp),
+  extraLarge = RoundedCornerShape(28.dp),
+)
 
 // Brand palette — UI-SPEC.md §3 (powder blue primary, burnt orange secondary).
 // Dark: bg #0E1116 / surface #161B22 / raised #1F262E · primary #8FC7E8 · secondary #E0662B
@@ -80,6 +122,8 @@ fun HermesBotsTheme(
     CompositionLocalProvider(LocalBrandDark provides darkTheme) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = AppTypography,
+            shapes = AppShapes,
             content = content,
         )
     }

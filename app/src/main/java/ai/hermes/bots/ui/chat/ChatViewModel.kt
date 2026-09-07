@@ -1,8 +1,6 @@
 package ai.hermes.bots.ui.chat
 
 import ai.hermes.bots.HermesBotsApp
-import ai.hermes.bots.data.ApprovalCard
-import ai.hermes.bots.data.AvatarImage
 import ai.hermes.bots.data.CanonicalChat
 import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ChatMessagesParser
@@ -18,8 +16,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -28,6 +29,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
 
 class ChatViewModel(
     app: Application,
@@ -38,6 +40,25 @@ class ChatViewModel(
     private val graph = (app as HermesBotsApp).graph
     private val _ui = MutableStateFlow(ChatUiState())
     val ui: StateFlow<ChatUiState> = _ui
+
+    // Presentation-only receive stamps for time separators (audit A5): item id → wall clock
+    // at first appearance. History from session.resume gets "now" — gaps still separate turns.
+    private val _itemTimes = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val itemTimes: StateFlow<Map<String, Long>> = _itemTimes
+
+    /** Header presence line (audit A2): "Active now" / "Idle · seen 17h" — never the model slug. */
+    val presence: StateFlow<String?> = graph.roster.roster
+        .map { rows ->
+            val entry = rows.firstOrNull { it.bot.connectionId == connectionId && it.bot.name == botName }
+            when {
+                entry == null -> null
+                entry.activeNow -> "Active now"
+                entry.bot.lastActiveMs != null -> "Idle · seen ${seenAgo(entry.bot.lastActiveMs)}"
+                else -> null
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val avatars = graph.roster.avatars
 
     private var gateway: HermesGateway? = null
@@ -50,6 +71,28 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch { open() }
+        viewModelScope.launch {
+            ui.collect { st -> stampNewItems(st.items) }
+        }
+    }
+
+    private fun stampNewItems(items: List<ChatItem>) {
+        val current = _itemTimes.value
+        if (items.all { current.containsKey(it.id) }) return
+        val now = System.currentTimeMillis()
+        val next = current.toMutableMap()
+        items.forEach { if (!next.containsKey(it.id)) next[it.id] = now }
+        _itemTimes.value = next
+    }
+
+    private fun seenAgo(ms: Long, now: Long = System.currentTimeMillis()): String {
+        val delta = (now - ms).coerceAtLeast(0)
+        return when {
+            delta < 60_000L -> "now"
+            delta < 3_600_000L -> "${delta / 60_000L}m"
+            delta < 86_400_000L -> "${delta / 3_600_000L}h"
+            else -> "${delta / 86_400_000L}d"
+        }
     }
 
     private suspend fun open() {

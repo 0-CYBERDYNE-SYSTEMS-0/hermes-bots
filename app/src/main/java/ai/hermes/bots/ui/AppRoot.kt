@@ -1,5 +1,10 @@
 package ai.hermes.bots.ui
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -17,7 +22,14 @@ import ai.hermes.bots.ui.settings.SettingsScreen
 @Composable
 fun AppRoot() {
     val nav = rememberNavController()
-    NavHost(navController = nav, startDestination = "roster") {
+    NavHost(
+        navController = nav,
+        startDestination = "roster",
+        enterTransition = { fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 24 } },
+        exitTransition = { fadeOut(tween(220)) + slideOutVertically(tween(220)) { -it / 24 } },
+        popEnterTransition = { fadeIn(tween(220)) + slideInVertically(tween(220)) { -it / 24 } },
+        popExitTransition = { fadeOut(tween(220)) + slideOutVertically(tween(220)) { it / 24 } },
+    ) {
         composable("roster") {
             RosterScreen(
                 onOpenChat = { connectionId, botName -> nav.navigate("chat/$connectionId/$botName") },
@@ -80,6 +92,8 @@ fun AppRoot() {
                 connectionId = connectionId,
                 botName = botName,
                 onBack = { nav.popBackStack() },
+                onOpenRoutines = { nav.navigate("routines/$connectionId/$botName") },
+                onEditBot = { nav.navigate("editor/$connectionId/$botName") },
             )
         }
     }

@@ -24,9 +24,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -37,14 +38,25 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
-    private val settings = (app as HermesBotsApp).graph.settings
+    private val graph = (app as HermesBotsApp).graph
+    private val settings = graph.settings
 
     val themeMode: StateFlow<String> = settings.themeMode
     val notificationsEnabled: StateFlow<Boolean> = settings.notificationsEnabled
     val notificationHistory: StateFlow<List<NotificationEntry>> = settings.notificationHistory
+
+    // Roster + avatars for display-time notification resolution (V3): recorded labels can
+    // carry the app-name fallback; resolve against known bots without re-writing history.
+    val roster: StateFlow<List<ai.hermes.bots.data.RosterEntry>> = graph.roster.roster
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val avatars: StateFlow<Map<String, ai.hermes.bots.data.AvatarImage>> = graph.roster.avatars
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     fun setThemeMode(mode: String) {
         viewModelScope.launch { settings.setThemeMode(mode) }
@@ -79,6 +91,7 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }

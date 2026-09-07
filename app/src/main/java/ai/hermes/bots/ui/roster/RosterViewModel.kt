@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -23,6 +24,11 @@ class RosterViewModel(app: Application) : AndroidViewModel(app) {
 
     val connections: StateFlow<List<ConnectionRecord>> = graph.connections.connections
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Bell badge: any notification history exists (display-only, audit A1). */
+    val hasNotifications: StateFlow<Boolean> = graph.settings.notificationHistory
+        .map { it.isNotEmpty() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     fun markRead(connectionId: String, botName: String) {
         graph.roster.markRead(connectionId, botName)

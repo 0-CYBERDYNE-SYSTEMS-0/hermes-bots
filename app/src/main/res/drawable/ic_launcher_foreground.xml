@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hermes Bots launcher face: one blobatar-style face on powder blue (audit A24). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- blob body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,24 C69,22 86,36 86,54 C86,72 72,88 54,88 C37,88 22,73 22,55 C22,37 39,26 54,24 Z" />
+    <!-- eyes -->
+    <path
+        android:fillColor="#14181C"
+        android:pathData="M44,52 m-4.2,0 a4.2,4.2 0 1,1 8.4,0 a4.2,4.2 0 1,1 -8.4,0" />
+    <path
+        android:fillColor="#14181C"
+        android:pathData="M64,52 m-4.2,0 a4.2,4.2 0 1,1 8.4,0 a4.2,4.2 0 1,1 -8.4,0" />
+</vector>

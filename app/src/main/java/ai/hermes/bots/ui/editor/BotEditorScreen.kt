@@ -7,29 +7,37 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,13 +47,14 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,7 +66,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 
-@OptIn(ExperimentalMaterial3Api::class)
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun BotEditorScreen(
     editConnectionId: String?,
@@ -90,6 +100,7 @@ fun BotEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 title = { Text(if (ui.isEdit) "Edit bot" else "New bot") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
@@ -97,6 +108,23 @@ fun BotEditorScreen(
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 3.dp,
+                modifier = Modifier.navigationBarsPadding(),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    Button(onClick = { vm.save() }, enabled = !ui.saving && (ui.isEdit || ui.name.isNotBlank())) {
+                        Text(if (ui.saving) "Saving…" else "Save")
+                    }
+                }
+            }
+        },
     ) { padding ->
         if (ui.loading) {
             Column(
@@ -152,20 +180,12 @@ fun BotEditorScreen(
                 minLines = 2,
             )
             if (!ui.isEdit) {
-                val conn = connections.firstOrNull { it.id == ui.createOnConnectionId }
-                ExposedDropdownMenuBox(expanded = false, onExpandedChange = {}) {
-                    OutlinedTextField(
-                        value = conn?.label ?: ui.createOnConnectionId,
-                        onValueChange = {},
-                        label = { Text("Create on") },
-                        readOnly = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                }
                 Column {
-                    Text("Connection", style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Create on", style = MaterialTheme.typography.labelMedium)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
                         connections.take(3).forEach { c ->
                             FilterChip(
                                 selected = c.id == ui.createOnConnectionId,
@@ -176,42 +196,76 @@ fun BotEditorScreen(
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = ui.provider,
-                    onValueChange = { n -> vm.set { it.copy(provider = n) } },
-                    label = { Text("Provider") },
+            var advanced by remember { mutableStateOf(false) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.small)
+                    .clickable { advanced = !advanced }
+                    .padding(vertical = 10.dp, horizontal = 4.dp),
+            ) {
+                Text(
+                    if (ui.provider.isBlank() && ui.model.isBlank()) {
+                        "Model — tap Advanced to set"
+                    } else {
+                        ai.hermes.bots.ui.util.Humanize.model("${ui.provider}/${ui.model}")
+                            ?: "${ui.provider}/${ui.model}".ifBlank { "Model" }
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f),
-                    singleLine = true,
                 )
-                OutlinedTextField(
-                    value = ui.model,
-                    onValueChange = { n -> vm.set { it.copy(model = n) } },
-                    label = { Text("Model") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
+                Text(
+                    "Advanced",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Icon(
+                    if (advanced) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            OutlinedButton(onClick = { vm.loadModelOptions() }) { Text("Load model options") }
-            if (ui.modelOptions.isNotEmpty()) {
-                ExposedDropdownMenuBox(expanded = modelMenu, onExpandedChange = { modelMenu = it }) {
-                    OutlinedTextField(
-                        value = "${ui.provider}/${ui.model}".ifBlank { "pick a model" },
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Pick from loaded options") },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(),
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenu) },
-                    )
-                    ExposedDropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
-                        ui.modelOptions.take(50).forEach { opt ->
-                            DropdownMenuItem(
-                                text = { Text("${opt.provider} / ${opt.model}") },
-                                onClick = {
-                                    vm.set { it.copy(provider = opt.provider, model = opt.model) }
-                                    modelMenu = false
-                                },
+            androidx.compose.animation.AnimatedVisibility(visible = advanced) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = ui.provider,
+                            onValueChange = { n -> vm.set { it.copy(provider = n) } },
+                            label = { Text("Provider") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = ui.model,
+                            onValueChange = { n -> vm.set { it.copy(model = n) } },
+                            label = { Text("Model") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                        )
+                    }
+                    OutlinedButton(onClick = { vm.loadModelOptions() }) { Text("Load model options") }
+                    if (ui.modelOptions.isNotEmpty()) {
+                        ExposedDropdownMenuBox(expanded = modelMenu, onExpandedChange = { modelMenu = it }) {
+                            OutlinedTextField(
+                                value = "${ui.provider}/${ui.model}".ifBlank { "pick a model" },
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Pick from loaded options") },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(),
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenu) },
                             )
+                            ExposedDropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
+                                ui.modelOptions.take(50).forEach { opt ->
+                                    DropdownMenuItem(
+                                        text = { Text("${opt.provider} / ${opt.model}") },
+                                        onClick = {
+                                            vm.set { it.copy(provider = opt.provider, model = opt.model) }
+                                            modelMenu = false
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -231,21 +285,24 @@ fun BotEditorScreen(
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = ui.hidden, onClick = { vm.set { it.copy(hidden = !it.hidden) } }, label = { Text("Hidden") })
-                Spacer(Modifier.weight(1f))
-                Button(onClick = { vm.save() }, enabled = !ui.saving && (ui.isEdit || ui.name.isNotBlank())) {
-                    Text(if (ui.saving) "Saving…" else "Save")
-                }
             }
             if (ui.skills.isNotEmpty()) {
-                Text("Skills (disabled when unchecked)", style = MaterialTheme.typography.labelMedium)
-                ui.skills.forEach { skill ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                val onCount = ui.skills.count { it.enabled }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Skills", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "$onCount of ${ui.skills.size} on",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ui.skills.forEach { skill ->
                         FilterChip(
                             selected = skill.enabled,
                             onClick = { vm.toggleSkill(skill.name, !skill.enabled) },
                             label = { Text(skill.name) },
                         )
-                        Spacer(Modifier.size(8.dp))
                     }
                 }
             }

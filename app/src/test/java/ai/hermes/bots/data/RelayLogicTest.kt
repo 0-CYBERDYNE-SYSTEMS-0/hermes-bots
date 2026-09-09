@@ -46,4 +46,20 @@ class RelayLogicTest {
         assertTrue(fail["reply"] == null)
         assertTrue(fail["reason"]!!.jsonPrimitive.content.contains("4091"))
     }
+
+    private fun agent(handle: String) = RelayEngine.RelayAgent(handle, handle, "c", "GW", handle, "")
+
+    @Test
+    fun `transient empty roster fetch keeps cached peers`() {
+        val cached = listOf(agent("scout"), agent("default"))
+        assertEquals(cached, RelayEngine.mergeAgents(cached, emptyList()))
+    }
+
+    @Test
+    fun `fresh non-empty fetch replaces cache and empty start accepts empty`() {
+        val cached = listOf(agent("scout"))
+        val fresh = listOf(agent("recon"), agent("default"))
+        assertEquals(fresh, RelayEngine.mergeAgents(cached, fresh))
+        assertTrue(RelayEngine.mergeAgents(null, emptyList()).isEmpty())
+    }
 }

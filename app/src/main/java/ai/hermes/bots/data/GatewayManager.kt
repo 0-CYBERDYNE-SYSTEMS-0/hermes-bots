@@ -1,6 +1,8 @@
 package ai.hermes.bots.data
 
 import ai.hermes.bots.protocol.Auth
+import ai.hermes.bots.protocol.FleetProbe
+import ai.hermes.bots.protocol.FleetProbeResult
 import ai.hermes.bots.protocol.GatewayAuth
 import ai.hermes.bots.protocol.GatewayProbe
 import ai.hermes.bots.protocol.HermesGateway
@@ -33,13 +35,26 @@ class GatewayManager(
     private val _socketStates = MutableStateFlow<Map<String, SocketState>>(emptyMap())
     val socketStates: StateFlow<Map<String, SocketState>> = _socketStates
 
-    /** Connections whose gateway lacks bot_relay.* (-32601) — set in Phase 4. */
-    private val _relayUnsupported = MutableStateFlow<Set<String>>(emptySet())
-    val relayUnsupported: StateFlow<Set<String>> = _relayUnsupported
+    /**
+     * Per-connection relay observability (B5): {Unknown, Supported, Unsupported} + last
+     * successful drain. Never latches — RelayEngine re-probes on reconnect and flips it back.
+     */
+    private val relayBoard = RelayStatusBoard()
+    val relayStatus: StateFlow<Map<String, RelayStatus>> = relayBoard.states
 
-    /** Mark a connection as lacking bot_relay.* support (5110-style -32601 degradation). */
+    /** Called by RelayEngine when the roster.sync probe succeeds. */
+    fun markRelaySupported(connectionId: String) {
+        relayBoard.markSupported(connectionId)
+    }
+
+    /** Called by RelayEngine on -32601; the engine re-probes on reconnect, clearing this. */
     fun markRelayUnsupported(connectionId: String) {
-        _relayUnsupported.update { it + connectionId }
+        relayBoard.markUnsupported(connectionId)
+    }
+
+    /** Called by RelayEngine after every successful bot_relay.outbox.drain. */
+    fun markRelayDrained(connectionId: String, atMs: Long = System.currentTimeMillis()) {
+        relayBoard.markDrained(connectionId, atMs)
     }
 
     private val stateJobs = mutableMapOf<String, Job>()
@@ -55,6 +70,10 @@ class GatewayManager(
 
     suspend fun probe(record: ConnectionRecord): GatewayProbe =
         Auth.probe(client, record.baseUrl)
+
+    /** Full verification probe (B6): health + credentials + one-shot WS + capability bits. */
+    suspend fun verifyFleet(record: ConnectionRecord): FleetProbeResult =
+        FleetProbe.run(client, record.baseUrl, record.auth)
 
     private suspend fun reconcile(records: List<ConnectionRecord>) {
         val wanted = records.associateBy { it.id }
@@ -80,6 +99,7 @@ class GatewayManager(
         socket.start()
         _live.update { it + (rec.id to ConnectionLive(rec, socket, gateway)) }
         _socketStates.update { it + (rec.id to socket.state.value) }
+        relayBoard.reset(rec.id)
         stateJobs[rec.id]?.cancel()
         stateJobs[rec.id] = scope.launch {
             socket.state.collect { st ->
@@ -96,6 +116,7 @@ class GatewayManager(
         }
         _live.update { it - id }
         _socketStates.update { it - id }
+        relayBoard.remove(id)
     }
 
     private suspend fun wsUrlFor(rec: ConnectionRecord): String = when (val auth = rec.auth) {

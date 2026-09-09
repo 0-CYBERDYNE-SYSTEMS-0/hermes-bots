@@ -6,6 +6,7 @@ import ai.hermes.bots.data.BotAdmin
 import ai.hermes.bots.data.BotAdminRepository
 import ai.hermes.bots.data.ConnectionRecord
 import ai.hermes.bots.data.RosterEntry
+import ai.hermes.bots.data.RosterParsing
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.protocol.HermesGateway
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,8 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -43,6 +46,8 @@ data class EditorUiState(
     val pickedAvatar: AvatarImage? = null,
     val loading: Boolean = false,
     val saving: Boolean = false,
+    /** null = unknown (not fetched / new bot); surfaced from profiles.list ui_meta (B3). */
+    val relayCapable: Boolean? = null,
     val message: String? = null,
     val error: String? = null,
     val saved: Boolean = false,
@@ -91,6 +96,8 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
                             toolsets = snap.toolsets,
                         )
                     }
+                    // B3: per-bot "can message other bots" state from profiles.list ui_meta.
+                    _ui.update { it.copy(relayCapable = fetchRelayCapable(connId, editName)) }
                 } else {
                     _ui.update { it.copy(loading = false) }
                 }
@@ -182,7 +189,9 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
                         )
                     }
                     s.pickedAvatar?.let { admin.setAvatar(connId, editName!!, avatarToDataUrl(it)) }
-                    _ui.update { it.copy(saving = false, saved = true, message = "Saved ${editName}") }
+                    // Edit-save writes ui_meta["hermes-bots"] unconditionally (hidden is always
+                    // in the patch), so the bot is relay-enabled from now on (B3).
+                    _ui.update { it.copy(saving = false, saved = true, relayCapable = true, message = "Saved ${editName}") }
                 } else {
                     admin.create(
                         connectionId = connId,
@@ -193,19 +202,26 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
                         model = s.model.ifBlank { null },
                         provider = s.provider.ifBlank { null },
                     )
-                    if (s.sectionId.isNotBlank() || s.hidden) {
-                        waitRosterRow(connId, s.name.trim())
-                        admin.configure(
-                            connectionId = connId,
-                            name = s.name.trim(),
-                            uiMeta = BotAdmin.mergeUiMeta(null, BotAdmin.UiMetaPatch(sectionId = s.sectionId.ifBlank { null }, hidden = s.hidden.takeIf { it })),
-                        )
-                    }
+                    // B3: relay-enable unconditionally. ui_meta["hermes-bots"] is what makes
+                    // gateways inject `message_agent` into this bot's chats (bot_mode_probe
+                    // is_bot_mode_managed). `hidden` is always written so the payload is never
+                    // empty — profiles.list hides empty ui_meta, and we surface relay state
+                    // from that field. A failure here surfaces via the outer handler; re-saving
+                    // the bot in the editor re-writes the flag (edit path writes it too).
+                    waitRosterRow(connId, s.name.trim())
+                    admin.configure(
+                        connectionId = connId,
+                        name = s.name.trim(),
+                        uiMeta = BotAdmin.mergeUiMeta(
+                            null,
+                            BotAdmin.UiMetaPatch(sectionId = s.sectionId.ifBlank { null }, hidden = s.hidden),
+                        ),
+                    )
                     s.pickedAvatar?.let {
                         waitRosterRow(connId, s.name.trim())
                         admin.setAvatar(connId, s.name.trim(), avatarToDataUrl(it))
                     }
-                    _ui.update { it.copy(saving = false, saved = true, message = "Created ${s.name.trim()}") }
+                    _ui.update { it.copy(saving = false, saved = true, relayCapable = true, message = "Created ${s.name.trim()}") }
                 }
             } catch (e: Exception) {
                 _ui.update { it.copy(saving = false, error = e.message ?: "save failed") }
@@ -215,6 +231,25 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
 
     private suspend fun gatewayFor(connId: String): HermesGateway =
         graph.gateways.live.first()[connId]?.gateway ?: throw IllegalStateException("connection not live")
+
+    /**
+     * B3: per-bot relay state from profiles.list — ui_meta["hermes-bots"] present means the
+     * gateway injects `message_agent` into this bot's chats. Best-effort: null on any failure.
+     */
+    private suspend fun fetchRelayCapable(connId: String, name: String): Boolean? = try {
+        val gw = gatewayFor(connId)
+        val result = gw.request(
+            Catalog.METHOD_PROFILES_LIST,
+            buildJsonObject { put("include_sessions", false) },
+            30_000,
+        )
+        val rows = (result["profiles"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+        rows.firstOrNull {
+            (it["name"] as? JsonPrimitive)?.takeIf { p -> p.isString }?.content == name
+        }?.let { RosterParsing.relayCapable(it) }
+    } catch (e: Exception) {
+        null
+    }
 
     private suspend fun currentRow(connId: String, name: String): RosterEntry? =
         graph.roster.roster.firstOrNull()?.firstOrNull { it.bot.connectionId == connId && it.bot.name == name }

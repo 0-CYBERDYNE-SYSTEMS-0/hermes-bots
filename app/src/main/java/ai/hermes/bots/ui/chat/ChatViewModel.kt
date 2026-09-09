@@ -18,6 +18,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -60,6 +61,14 @@ class ChatViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val avatars = graph.roster.avatars
+
+    /** B4: the owning gateway's label when this bot's name collides across gateways. */
+    val gatewayLabel: StateFlow<String?> = combine(graph.roster.roster, graph.connections.connections) { rows, conns ->
+        val row = rows.firstOrNull { it.bot.connectionId == connectionId && it.bot.name == botName }
+            ?: return@combine null
+        if (row.bot.name !in ai.hermes.bots.data.BotNameCollisions.compute(rows.map { it.bot })) return@combine null
+        conns.firstOrNull { it.id == connectionId }?.label
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private var gateway: HermesGateway? = null
     private var runtimeSessionId: String? = null

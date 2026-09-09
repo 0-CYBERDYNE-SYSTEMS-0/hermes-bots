@@ -9,8 +9,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -31,6 +34,11 @@ class GroupsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _ui = MutableStateFlow(GroupsUiState())
     val ui: StateFlow<GroupsUiState> = _ui
+
+    /** B4: bot names present on more than one connection across the union roster. */
+    val collisionNames: StateFlow<Set<String>> = graph.roster.roster
+        .map { rows -> ai.hermes.bots.data.BotNameCollisions.compute(rows.map { it.bot }) }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptySet())
 
     init {
         viewModelScope.launch {

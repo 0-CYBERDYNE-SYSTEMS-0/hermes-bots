@@ -23,7 +23,9 @@ import java.util.logging.Logger
  * bot_relay.roster.sync; drain loop every 30 s (+ immediate, debounced, on
  * bot_relay.outbox.pending) drains each sender's outbox, delivers each envelope on the TARGET
  * connection's socket with a >1320 s budget, then posts bot_relay.reply back on the sender's
- * socket. Gateways whose RPCs are missing (-32601) are marked relayUnsupported and skipped.
+ * socket. Gateways whose RPCs are missing (-32601) are NOT latched (B5): they are marked
+ * Unsupported and re-probed on every reconnect (or at the roster cadence), so a gateway that
+ * gains relay support is picked up without a restart.
  */
 class RelayEngine(
     private val manager: GatewayManager,
@@ -73,7 +75,7 @@ class RelayEngine(
     private suspend fun relayLoop(connectionId: String, conn: ConnectionLive) {
         while (true) {
             // A gateway that isn't Ready yet is DELAYED, not unsupported: keep waiting so a
-            // slow-connecting gateway joins the loops once it comes up (only -32601 latches).
+            // slow-connecting gateway joins the loops once it comes up.
             val ready = withTimeoutOrNull(30_000) {
                 conn.gateway.state.first { it is SocketState.Ready }
             } != null
@@ -87,15 +89,20 @@ class RelayEngine(
                     buildJsonObject { put("agents", JsonArray(emptyList())) },
                     30_000,
                 )
+                manager.markRelaySupported(connectionId)
                 false
             } catch (e: RpcException) {
                 e.isMethodNotFound()
             }
-            if (unsupported) {
-                manager.markRelayUnsupported(connectionId)
-                return
+            if (!unsupported) break
+            // B5: no permanent latch. Wait for the next reconnect (server restart / network
+            // blip — the epoch bump signals it) and re-probe, or re-probe at the roster
+            // cadence, whichever comes first.
+            manager.markRelayUnsupported(connectionId)
+            withTimeoutOrNull(Catalog.RELAY_ROSTER_LOOP_MS) {
+                conn.gateway.state.first { it !is SocketState.Ready }
+                conn.gateway.state.first { it is SocketState.Ready }
             }
-            break
         }
         val rosterJob = scope.launch { rosterLoop(connectionId, conn) }
         val drainJob = scope.launch { drainLoop(connectionId, conn) }
@@ -113,8 +120,11 @@ class RelayEngine(
 
     private suspend fun rosterSyncOnce(connectionId: String, conn: ConnectionLive) {
         // Refresh this connection's own agents, then push the union of the OTHERS to it.
+        // A transiently empty fetch (slow profiles.list, mid-reconnect) must NOT erase the
+        // previously known set — the gateway's fail-fast liveness check treats absent peers
+        // as unreachable, which silently drops bot->bot replies until the next lucky cycle.
         val mine = fetchAgents(connectionId, conn)
-        agentCache[connectionId] = mine
+        agentCache[connectionId] = mergeAgents(agentCache[connectionId], mine)
         val others = agentCache.filterKeys { it != connectionId }.values.flatten()
         conn.gateway.request(
             Catalog.METHOD_BOT_RELAY_ROSTER_SYNC,
@@ -164,6 +174,8 @@ class RelayEngine(
             JsonObject(emptyMap()),
             60_000,
         )
+        // A successful drain poll proves the relay RPCs are live — stamp it for the badge (B5).
+        manager.markRelayDrained(connectionId)
         val envelopes = (result["envelopes"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
         for (envelope in envelopes) {
             deliverEnvelope(connectionId, conn, envelope)
@@ -209,5 +221,13 @@ class RelayEngine(
         runCatching {
             sender.gateway.request(Catalog.METHOD_BOT_RELAY_REPLY, replyParams, 60_000)
         }.onFailure { log.warning("reply failed envelope=$envelopeId: ${it.message}") }
+    }
+
+    companion object {
+        /** Monotonic roster merge: a transiently empty fetch never erases known peers —
+         * the gateway treats an absent peer as unreachable, which would silently drop
+         * bot-to-bot replies until a later lucky cycle. */
+        fun mergeAgents(previous: List<RelayAgent>?, fresh: List<RelayAgent>): List<RelayAgent> =
+            if (fresh.isNotEmpty() || previous.isNullOrEmpty()) fresh else previous
     }
 }

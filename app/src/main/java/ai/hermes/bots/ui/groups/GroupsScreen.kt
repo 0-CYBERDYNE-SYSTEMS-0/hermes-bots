@@ -65,6 +65,7 @@ fun GroupsScreen(
     ),
 ) {
     val ui by vm.ui.collectAsState()
+    val collisionNames by vm.collisionNames.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var creating by remember { mutableStateOf(false) }
 
@@ -198,6 +199,8 @@ fun GroupsScreen(
         CreateGroupDialog(
             roster = ui.roster,
             busy = ui.busy,
+            connectionLabel = ui.connectionLabel,
+            collisionNames = collisionNames,
             onDismiss = { creating = false },
             onCreate = { name, members ->
                 vm.create(name, members)
@@ -211,6 +214,8 @@ fun GroupsScreen(
 private fun CreateGroupDialog(
     roster: List<RosterEntry>,
     busy: Boolean,
+    connectionLabel: String,
+    collisionNames: Set<String>,
     onDismiss: () -> Unit,
     onCreate: (name: String, members: List<RosterEntry>) -> Unit,
 ) {
@@ -226,7 +231,7 @@ private fun CreateGroupDialog(
                 Text("Pick 2–6 members (gateway requirement)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (roster.isEmpty()) Text("No bots on this gateway yet.", style = MaterialTheme.typography.bodySmall)
                 roster.forEach { entry ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Checkbox(
                             checked = entry.bot.name in selected.value,
                             onCheckedChange = { checked ->
@@ -234,6 +239,10 @@ private fun CreateGroupDialog(
                             },
                         )
                         Text(entry.bot.displayName ?: entry.bot.name)
+                        // B4: quiet gateway chip when this name exists on other gateways too.
+                        if (entry.bot.name in collisionNames && connectionLabel.isNotBlank()) {
+                            ai.hermes.bots.ui.components.ConnectionChip(connectionLabel)
+                        }
                     }
                 }
             }

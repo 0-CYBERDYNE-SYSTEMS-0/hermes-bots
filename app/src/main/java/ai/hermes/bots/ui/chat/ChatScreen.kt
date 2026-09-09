@@ -100,6 +100,7 @@ fun ChatScreen(
     val avatars by vm.avatars.collectAsState()
     val itemTimes by vm.itemTimes.collectAsState()
     val presence by vm.presence.collectAsState()
+    val gatewayLabel by vm.gatewayLabel.collectAsState()
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val rows = remember(ui.items, itemTimes) { Transcript.build(ui.items, itemTimes) }
@@ -120,7 +121,14 @@ fun ChatScreen(
                             real = avatars["$connectionId:$botName"],
                         )
                         Column {
-                            Text(botName)
+                            Row(
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(botName)
+                                // B4: quiet gateway chip when this name exists on other gateways.
+                                gatewayLabel?.let { ai.hermes.bots.ui.components.ConnectionChip(it) }
+                            }
                             val subtitle = listOfNotNull(
                                 presence,
                                 ai.hermes.bots.ui.util.Humanize.model(ui.botModel),

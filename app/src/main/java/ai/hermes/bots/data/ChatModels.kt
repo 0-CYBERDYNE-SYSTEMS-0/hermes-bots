@@ -36,6 +36,17 @@ data class ChatUiState(
     val botModel: String? = null,
 )
 
+/**
+ * B4 same-name disambiguation: bot names that exist on more than one connection across the
+ * union roster — wherever such a name renders, show the owning connection's label.
+ */
+object BotNameCollisions {
+    fun compute(rows: List<ai.hermes.bots.data.BotRow>): Set<String> =
+        rows.groupBy { it.name }
+            .filterValues { bots -> bots.map { b -> b.connectionId }.distinct().size > 1 }
+            .keys
+}
+
 /** Parses the display `messages` array returned by session.resume / session.create
  *  (server shape: {"role": "user"|"assistant"|"tool", "text"|...}; see PROTOCOL.md §5.2). */
 object ChatMessagesParser {

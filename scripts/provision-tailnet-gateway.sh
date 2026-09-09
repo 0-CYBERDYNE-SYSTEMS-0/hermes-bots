@@ -9,15 +9,23 @@
 # Idempotent: re-running keeps the existing password (it cannot be recovered from the hash —
 # delete the `dashboard.basic_auth` block in ~/.hermes/config.yaml first to mint a new one).
 #
-# Usage:  bash provision-tailnet-gateway.sh [--port 9300] [--username user]
+# Usage:  bash provision-tailnet-gateway.sh [--port 9300] [--username user] [--qr] [--name LABEL]
+#   --qr        after setup, also print a scannable deep link that pre-fills the app's
+#               "Add gateway" dialog (hermesbots://add-gateway?...). Needs python3 `qrcode`
+#               for the ASCII QR; without it, the URI is printed + written to a file.
+#   --name      label carried in the deep link (defaults to the short hostname)
 set -euo pipefail
 
 PORT="9300"
 USERNAME="user"
+QR=0
+NAME_LABEL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) PORT="$2"; shift 2;;
     --username) USERNAME="$2"; shift 2;;
+    --qr) QR=1; shift;;
+    --name) NAME_LABEL="$2"; shift 2;;
     *) echo "unknown arg: $1"; exit 1;;
   esac
 done
@@ -128,3 +136,47 @@ echo "   Password : $PASSWORD"
 echo
 echo " Reachable from ANY network while this Mac runs Tailscale."
 echo "════════════════════════════════════════════════════════════"
+
+# 4. Optional (--qr): deep link + terminal QR so the phone can add this gateway in one tap.
+#    Additive: the non-flag path above is untouched.
+if [[ "$QR" == "1" ]]; then
+  LABEL="${NAME_LABEL:-$(hostname -s 2>/dev/null || echo "gateway-$PORT")}"
+  DEEPLINK="$("$VENV_PY" - "$TS_IP" "$PORT" "$USERNAME" "$PASSWORD" "$LABEL" <<'QREOF'
+import sys, urllib.parse
+ip, port, user, pw, label = sys.argv[1:6]
+# quote() not urlencode(): the app decodes '+' literally (not as space), so
+# secrets containing spaces must arrive as %20.
+q = urllib.parse.urlencode(
+    {"url": f"http://{ip}:{port}", "user": user, "token": pw, "name": label},
+    quote_via=urllib.parse.quote,
+)
+print(f"hermesbots://add-gateway?{q}")
+QREOF
+)"
+  echo
+  echo " Deep link for the Hermes Bots app (scan or copy — opens a pre-filled"
+  echo " Add-gateway dialog; sign-in fields come along):"
+  echo " ┌──────────── copy the line below ────────────┐"
+  echo " $DEEPLINK"
+  echo " └─────────────────────────────────────────────┘"
+  LINK_FILE="$HOME/hermes-gateway-deeplink.txt"
+  printf '%s\n' "$DEEPLINK" > "$LINK_FILE"
+  echo " Also written to: $LINK_FILE"
+  if "$VENV_PY" -c 'import qrcode' >/dev/null 2>&1; then
+    echo
+    "$VENV_PY" - "$DEEPLINK" <<'QREOF'
+import sys
+import qrcode
+qr = qrcode.QRCode(border=1)
+qr.add_data(sys.argv[1])
+qr.make()
+qr.print_ascii(invert=True)
+QREOF
+    echo " Scan the QR above with the phone camera (or any QR scanner)."
+  else
+    echo " Terminal QR needs the python 'qrcode' package — install once with:"
+    echo "   $VENV_PY -m pip install qrcode"
+    echo " Then re-run with --qr, or paste the deep link on the phone directly."
+  fi
+  echo "════════════════════════════════════════════════════════════"
+fi

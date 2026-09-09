@@ -35,10 +35,17 @@ class ConnectionRepository(private val context: Context) {
         } ?: emptyList()
     }
 
+    /**
+     * Single save path for BOTH the edit dialog and fleet import (B8): normalize the base
+     * URL — trim, strip trailing "/", prefix http:// on scheme-less host:port.
+     */
     suspend fun upsert(record: ConnectionRecord) = mutate { cur ->
-        val merged = cur.filterNot { it.id == record.id } + record
+        val normalized = if (record.baseUrl.isBlank()) record else record.copy(
+            baseUrl = FleetProvisioning.normalizeBaseUrl(record.baseUrl),
+        )
+        val merged = cur.filterNot { it.id == normalized.id } + normalized
         val withPrimary = if (merged.none { it.primary }) {
-            merged.map { if (it.id == record.id) it.copy(primary = true) else it }
+            merged.map { if (it.id == normalized.id) it.copy(primary = true) else it }
         } else {
             merged
         }

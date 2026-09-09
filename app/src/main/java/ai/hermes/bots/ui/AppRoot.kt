@@ -1,14 +1,11 @@
 package ai.hermes.bots.ui
 
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.runtime.Composable
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import ai.hermes.bots.HermesBotsApp
+import ai.hermes.bots.data.ConnectionRecord
+import ai.hermes.bots.data.FleetProvisioning
+import ai.hermes.bots.data.GatewayDraft
+import ai.hermes.bots.ui.anychat.AnyChatRoomScreen
+import ai.hermes.bots.ui.anychat.AnyChatScreen
 import ai.hermes.bots.ui.chat.ChatScreen
 import ai.hermes.bots.ui.connections.ConnectionsScreen
 import ai.hermes.bots.ui.groups.GroupChatScreen
@@ -16,12 +13,70 @@ import ai.hermes.bots.ui.groups.GroupsScreen
 import ai.hermes.bots.ui.editor.BotEditorScreen
 import ai.hermes.bots.ui.roster.RosterScreen
 import ai.hermes.bots.ui.routines.RoutinesScreen
+import ai.hermes.bots.ui.settings.FleetProvisionDialog
 import ai.hermes.bots.ui.settings.NotificationsScreen
 import ai.hermes.bots.ui.settings.SettingsScreen
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.launch
+
+/** One-shot provisioning deep link delivered from MainActivity (B1a). */
+data class DeepLinkLaunch(val uri: String, val seq: Long)
 
 @Composable
-fun AppRoot() {
+fun AppRoot(deepLink: DeepLinkLaunch? = null) {
     val nav = rememberNavController()
+    val app = LocalContext.current.applicationContext as HermesBotsApp
+    val scope = rememberCoroutineScope()
+    var provisionDraft by remember { mutableStateOf<GatewayDraft?>(null) }
+
+    // Deep link → pre-filled add/edit gateway dialog (FLEET-CONNECT-SPEC B1a).
+    LaunchedEffect(deepLink) {
+        val link = deepLink ?: return@LaunchedEffect
+        provisionDraft = app.graph.provisioning.fromDeepLink(link.uri)
+    }
+    provisionDraft?.let { draft ->
+        FleetProvisionDialog(
+            draft = draft,
+            onProbe = { url, auth ->
+                app.graph.gateways.probe(
+                    ConnectionRecord(
+                        id = "probe",
+                        label = "",
+                        baseUrl = FleetProvisioning.normalizeBaseUrl(url),
+                        auth = auth,
+                    ),
+                )
+            },
+            onDismiss = {
+                provisionDraft = null
+                app.graph.provisioning.consume()
+            },
+            onSave = { saved ->
+                provisionDraft = null
+                app.graph.provisioning.consume()
+                scope.launch {
+                    app.graph.provisioning.save(saved)
+                    nav.navigate("connections") { launchSingleTop = true }
+                }
+            },
+        )
+    }
+
     NavHost(
         navController = nav,
         startDestination = "roster",
@@ -40,6 +95,7 @@ fun AppRoot() {
                 onEditBot = { connectionId, botName -> nav.navigate("editor/$connectionId/$botName") },
                 onOpenRoutines = { connectionId, botName -> nav.navigate("routines/$connectionId/$botName") },
                 onOpenGroups = { nav.navigate("groups") },
+                onOpenAnyChat = { nav.navigate("anychat") },
             )
         }
         composable("notifications") {
@@ -60,6 +116,21 @@ fun AppRoot() {
         composable("group/{connectionId}/{roomId}/{roomName}") { entry ->
             GroupChatScreen(
                 connectionId = entry.arguments?.getString("connectionId") ?: "",
+                roomId = entry.arguments?.getString("roomId") ?: "",
+                roomName = entry.arguments?.getString("roomName") ?: "",
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable("anychat") {
+            AnyChatScreen(
+                onBack = { nav.popBackStack() },
+                onOpenRoom = { roomId, roomName ->
+                    nav.navigate("anychat/$roomId/${android.net.Uri.encode(roomName)}")
+                },
+            )
+        }
+        composable("anychat/{roomId}/{roomName}") { entry ->
+            AnyChatRoomScreen(
                 roomId = entry.arguments?.getString("roomId") ?: "",
                 roomName = entry.arguments?.getString("roomName") ?: "",
                 onBack = { nav.popBackStack() },

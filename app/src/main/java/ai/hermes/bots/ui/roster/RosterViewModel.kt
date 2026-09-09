@@ -2,6 +2,7 @@ package ai.hermes.bots.ui.roster
 
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.AvatarImage
+import ai.hermes.bots.data.BotNameCollisions
 import ai.hermes.bots.data.ConnectionRecord
 import ai.hermes.bots.data.RosterEntry
 import android.app.Application
@@ -9,9 +10,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** The user's main assistant bot on the primary gateway (profile name, not a display name). */
+const val DEFAULT_ASSISTANT_NAME = "default"
 
 class RosterViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = (app as HermesBotsApp).graph
@@ -24,6 +29,17 @@ class RosterViewModel(app: Application) : AndroidViewModel(app) {
 
     val connections: StateFlow<List<ConnectionRecord>> = graph.connections.connections
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** B4: bot names present on more than one connection across the union roster. */
+    val collisionNames: StateFlow<Set<String>> = graph.roster.roster
+        .map { rows -> BotNameCollisions.compute(rows.map { it.bot }) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** Easy-access: the primary gateway's `default` assistant, pinned at the very top. */
+    val assistant: StateFlow<RosterEntry?> = combine(graph.roster.roster, graph.connections.connections) { rows, conns ->
+        val primary = conns.firstOrNull { it.primary } ?: return@combine null
+        rows.firstOrNull { it.bot.connectionId == primary.id && it.bot.name == DEFAULT_ASSISTANT_NAME }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** Bell badge: any notification history exists (display-only, audit A1). */
     val hasNotifications: StateFlow<Boolean> = graph.settings.notificationHistory

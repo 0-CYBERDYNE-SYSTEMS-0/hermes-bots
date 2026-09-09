@@ -286,6 +286,21 @@ fun BotEditorScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = ui.hidden, onClick = { vm.set { it.copy(hidden = !it.hidden) } }, label = { Text("Hidden") })
             }
+            ui.relayCapable?.let { capable ->
+                Text(
+                    if (capable) {
+                        "Can message bots on other gateways"
+                    } else {
+                        "Can't message other bots yet — Save to enable it"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (capable) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
             if (ui.skills.isNotEmpty()) {
                 val onCount = ui.skills.count { it.enabled }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

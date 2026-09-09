@@ -1,7 +1,9 @@
 package ai.hermes.bots
 
 import ai.hermes.bots.data.ConnectionRepository
+import ai.hermes.bots.data.AnyChatRepository
 import ai.hermes.bots.data.CronRepository
+import ai.hermes.bots.data.FleetProvisioningCoordinator
 import ai.hermes.bots.data.GatewayManager
 import ai.hermes.bots.data.GroupRepository
 import ai.hermes.bots.data.RelayEngine
@@ -26,6 +28,8 @@ class AppGraph(private val app: HermesBotsApp) {
     val groups = GroupRepository(gateways)
     val relay = RelayEngine(gateways, scope)
     val settings = SettingsRepository(app)
+    val provisioning = FleetProvisioningCoordinator(connections)
+    val anyChat = AnyChatRepository(app, gateways, roster, scope)
 
     private val notifier = BotNotifier(app)
     private val notifyJobs = mutableMapOf<String, kotlinx.coroutines.Job>()

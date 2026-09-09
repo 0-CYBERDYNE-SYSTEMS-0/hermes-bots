@@ -83,11 +83,15 @@ fun RosterScreen(
     onNewBot: () -> Unit,
     onEditBot: (connectionId: String, botName: String) -> Unit,
     onOpenRoutines: (connectionId: String, botName: String) -> Unit,
+    onOpenAnyChat: () -> Unit = {},
     vm: RosterViewModel = viewModel(),
 ) {
     val roster by vm.roster.collectAsState()
     val avatars by vm.avatars.collectAsState()
     val hasNotifications by vm.hasNotifications.collectAsState()
+    val collisions by vm.collisionNames.collectAsState()
+    val connections by vm.connections.collectAsState()
+    val assistant by vm.assistant.collectAsState()
     var search by remember { mutableStateOf("") }
     var showHidden by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -106,7 +110,15 @@ fun RosterScreen(
                 (entry.bot.description ?: "").lowercase(Locale.ROOT).contains(query) ||
                 (entry.bot.lastPreview ?: "").lowercase(Locale.ROOT).contains(query)
         }
-    val sections = visible.groupBy { it.bot.sectionId }.toSortedMap(compareBy { it ?: "" })
+    // B4: same-named bots across gateways get a quiet gateway chip.
+    fun gatewayLabel(entry: RosterEntry): String? =
+        if (entry.bot.name in collisions) connections.firstOrNull { it.id == entry.bot.connectionId }?.label else null
+    // Easy-access: pin the primary gateway's `default` bot under "Assistant" — unless the
+    // rendered list already shows it first (then don't duplicate the row).
+    val rendered = visible.groupBy { it.bot.sectionId }.toSortedMap(compareBy { it ?: "" }).values.flatten()
+    val pinnedAssistant = assistant?.takeIf { a -> a in rendered && rendered.firstOrNull() != a }
+    val listed = if (pinnedAssistant != null) visible.filterNot { it == pinnedAssistant } else visible
+    val sections = listed.groupBy { it.bot.sectionId }.toSortedMap(compareBy { it ?: "" })
 
     Scaffold(
         topBar = {
@@ -131,6 +143,10 @@ fun RosterScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = "More options")
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Any chats") },
+                            onClick = { menu = false; onOpenAnyChat() },
+                        )
                         DropdownMenuItem(
                             text = { Text("Group chats") },
                             onClick = { menu = false; onOpenGroups() },
@@ -285,6 +301,24 @@ fun RosterScreen(
                 }
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (pinnedAssistant != null) {
+                    item(key = "assistant-header") {
+                        ai.hermes.bots.ui.components.SectionHeader("Assistant")
+                    }
+                    item(key = "assistant-${pinnedAssistant.bot.connectionId}") {
+                        BotRowItem(
+                            modifier = Modifier.animateItem(),
+                            entry = pinnedAssistant,
+                            avatar = avatars[avatarKey(pinnedAssistant.bot)],
+                            gatewayLabel = gatewayLabel(pinnedAssistant),
+                            onClick = {
+                                vm.markRead(pinnedAssistant.bot.connectionId, pinnedAssistant.bot.name)
+                                onOpenChat(pinnedAssistant.bot.connectionId, pinnedAssistant.bot.name)
+                            },
+                            onLongClick = { sheetFor = pinnedAssistant },
+                        )
+                    }
+                }
                 sections.forEach { (sectionId, entries) ->
                     item(key = "header-${sectionId ?: "_"}") {
                         ai.hermes.bots.ui.components.SectionHeader(
@@ -296,6 +330,7 @@ fun RosterScreen(
                             modifier = Modifier.animateItem(),
                             entry = entry,
                             avatar = avatars[avatarKey(entry.bot)],
+                            gatewayLabel = gatewayLabel(entry),
                             onClick = {
                                 vm.markRead(entry.bot.connectionId, entry.bot.name)
                                 onOpenChat(entry.bot.connectionId, entry.bot.name)
@@ -384,6 +419,7 @@ private fun BotRowItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    gatewayLabel: String? = null,
 ) {
     val bot = entry.bot
     Row(
@@ -416,12 +452,17 @@ private fun BotRowItem(
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                bot.displayName ?: bot.name,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    bot.displayName ?: bot.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                // B4: quiet gateway chip when this name exists on more than one gateway.
+                gatewayLabel?.let { ai.hermes.bots.ui.components.ConnectionChip(it) }
+            }
             Text(
                 (bot.lastPreview ?: bot.description ?: "Tap to start the conversation")
                     .replace('*', ' ').replace('`', '\''),

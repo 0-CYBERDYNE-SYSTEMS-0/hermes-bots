@@ -1,8 +1,11 @@
 package ai.hermes.bots.ui.connections
 
 import ai.hermes.bots.data.ConnectionRecord
+import ai.hermes.bots.data.RelayStatus
+import ai.hermes.bots.data.RelaySupport
+import ai.hermes.bots.protocol.Auth
+import ai.hermes.bots.protocol.FleetProbeResult
 import ai.hermes.bots.protocol.GatewayAuth
-import ai.hermes.bots.protocol.GatewayProbe
 import ai.hermes.bots.protocol.SocketState
 import ai.hermes.bots.ui.theme.Dimens
 import ai.hermes.bots.ui.theme.brandPalette
@@ -62,6 +65,8 @@ import kotlinx.coroutines.launch
 fun ConnectionsScreen(onBack: () -> Unit, vm: ConnectionsViewModel = viewModel()) {
     val connections by vm.connections.collectAsState()
     val socketStates by vm.socketStates.collectAsState()
+    val relayStatus by vm.relayStatus.collectAsState()
+    val verifyResults by vm.verifyResults.collectAsState()
     var editing by remember { mutableStateOf<ConnectionRecord?>(null) }
     var adding by remember { mutableStateOf(false) }
 
@@ -102,6 +107,9 @@ fun ConnectionsScreen(onBack: () -> Unit, vm: ConnectionsViewModel = viewModel()
                     ConnectionCard(
                         record = conn,
                         state = socketStates[conn.id] ?: SocketState.Idle,
+                        relay = relayStatus[conn.id],
+                        verified = verifyResults[conn.baseUrl]
+                            ?: verifyResults[Auth.normalizeBaseUrl(conn.baseUrl)],
                         onEdit = { editing = conn },
                         onSetPrimary = { vm.setPrimary(conn.id) },
                     )
@@ -130,7 +138,7 @@ fun ConnectionsScreen(onBack: () -> Unit, vm: ConnectionsViewModel = viewModel()
                 adding = false
                 editing = null
             },
-            onProbe = { baseUrl, auth -> vm.probe(baseUrl, auth) },
+            onVerify = { baseUrl, auth -> vm.verify(baseUrl, auth) },
         )
     }
 }
@@ -139,6 +147,8 @@ fun ConnectionsScreen(onBack: () -> Unit, vm: ConnectionsViewModel = viewModel()
 private fun ConnectionCard(
     record: ConnectionRecord,
     state: SocketState,
+    relay: RelayStatus?,
+    verified: FleetProbeResult?,
     onEdit: () -> Unit,
     onSetPrimary: () -> Unit,
 ) {
@@ -186,6 +196,16 @@ private fun ConnectionCard(
                         else -> MaterialTheme.colorScheme.error
                     },
                 )
+                // Subtle trust line (B5/B6): full verification after Test, otherwise the
+                // relay engine's live view of this gateway's bot-to-bot support.
+                val detail = cardDetail(state, relay, verified)
+                if (detail != null) {
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Icon(
                 Icons.Filled.KeyboardArrowRight,
@@ -193,6 +213,42 @@ private fun ConnectionCard(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+private fun cardDetail(state: SocketState, relay: RelayStatus?, verified: FleetProbeResult?): String? {
+    if (verified?.verified == true && state is SocketState.Ready) {
+        return buildString {
+            append("Verified ✓")
+            verified.serverVersion?.let { append(" · v").append(it) }
+            append(" · groups ").append(capBit(verified.groupsSupported))
+            append(" · relay ").append(capBit(verified.relaySupported))
+        }
+    }
+    val status = relay?.support ?: return null
+    return when (status) {
+        RelaySupport.Supported -> buildString {
+            append("Relay on")
+            relay.lastDrainMs?.let { append(" · checked ").append(agoShort(it)) }
+        }
+        RelaySupport.Unsupported -> "Relay off"
+        RelaySupport.Unknown -> "Relay ?"
+    }
+}
+
+private fun capBit(value: Boolean?): String = when (value) {
+    true -> "✓"
+    false -> "✗"
+    null -> "?"
+}
+
+private fun agoShort(ms: Long, now: Long = System.currentTimeMillis()): String {
+    val delta = (now - ms).coerceAtLeast(0)
+    return when {
+        delta < 60_000L -> "just now"
+        delta < 3_600_000L -> "${delta / 60_000L}m ago"
+        delta < 86_400_000L -> "${delta / 3_600_000L}h ago"
+        else -> "${delta / 86_400_000L}d ago"
     }
 }
 
@@ -204,7 +260,7 @@ private fun ConnectionEditDialog(
     onDismiss: () -> Unit,
     onSave: (ConnectionRecord) -> Unit,
     onDelete: (String) -> Unit,
-    onProbe: suspend (String, GatewayAuth) -> GatewayProbe,
+    onVerify: suspend (String, GatewayAuth) -> FleetProbeResult,
 ) {
     var label by remember { mutableStateOf(initial?.label ?: "") }
     var baseUrl by remember { mutableStateOf(initial?.baseUrl ?: "http://127.0.0.1:9119") }
@@ -218,8 +274,8 @@ private fun ConnectionEditDialog(
     var password by remember {
         mutableStateOf((initial?.auth as? GatewayAuth.BasicAuth)?.password ?: "")
     }
-    var probeResult by remember { mutableStateOf<GatewayProbe?>(null) }
-    var probing by remember { mutableStateOf(false) }
+    var verifyResult by remember { mutableStateOf<FleetProbeResult?>(null) }
+    var verifying by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     AlertDialog(
@@ -233,22 +289,32 @@ private fun ConnectionEditDialog(
                 OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("Label") }, singleLine = true)
                 OutlinedTextField(
                     value = baseUrl,
-                    onValueChange = { baseUrl = it; probeResult = null },
+                    onValueChange = { baseUrl = it; verifyResult = null },
                     label = { Text("Address") },
                     supportingText = { Text("e.g. 100.x.y.z:9300 or https://name.ts.net") },
                     singleLine = true,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !useBasic, onClick = { useBasic = false }, label = { Text("Token") })
-                    FilterChip(selected = useBasic, onClick = { useBasic = true }, label = { Text("User + pass") })
+                    FilterChip(selected = !useBasic, onClick = { useBasic = false; verifyResult = null }, label = { Text("Token") })
+                    FilterChip(selected = useBasic, onClick = { useBasic = true; verifyResult = null }, label = { Text("User + pass") })
                 }
                 if (useBasic) {
-                    OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, singleLine = true)
-                    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, singleLine = true)
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it; verifyResult = null },
+                        label = { Text("Username") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it; verifyResult = null },
+                        label = { Text("Password") },
+                        singleLine = true,
+                    )
                 } else {
                     OutlinedTextField(
                         value = token,
-                        onValueChange = { token = it; probeResult = null },
+                        onValueChange = { token = it; verifyResult = null },
                         label = { Text("Session token") },
                         supportingText = { Text("The dashboard token your gateway was started with") },
                         singleLine = true,
@@ -257,19 +323,19 @@ private fun ConnectionEditDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
                         onClick = {
-                            probing = true
+                            verifying = true
                             scope.launch {
                                 val auth = if (useBasic) GatewayAuth.BasicAuth(username, password)
                                 else GatewayAuth.TokenAuth(token)
-                                probeResult = onProbe(baseUrl, auth)
-                                probing = false
+                                verifyResult = onVerify(baseUrl, auth)
+                                verifying = false
                             }
                         },
-                        enabled = !probing && baseUrl.isNotBlank(),
-                    ) { Text(if (probing) "Testing…" else "Test") }
-                    probeResult?.let { probe ->
+                        enabled = !verifying && baseUrl.isNotBlank(),
+                    ) { Text(if (verifying) "Verifying…" else "Test") }
+                    verifyResult?.let { result ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (probe.reachable) {
+                            if (result.verified) {
                                 Icon(
                                     Icons.Filled.CheckCircle,
                                     contentDescription = null,
@@ -277,14 +343,13 @@ private fun ConnectionEditDialog(
                                     tint = brandPalette().success,
                                 )
                                 Text(
-                                    "Reachable · Hermes v${probe.version ?: "?"}" +
-                                        if (probe.authRequired == true) " · sign-in required" else "",
+                                    verificationLine(result),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = brandPalette().success,
                                 )
                             } else {
                                 Text(
-                                    "Couldn't reach it: ${probe.error ?: "unknown"}",
+                                    result.failure ?: "Couldn't verify this gateway.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error,
                                 )
@@ -325,4 +390,12 @@ private fun ConnectionEditDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/** "Verified ✓ · v0.21.0 · groups ✓ · relay ✓" (FLEET-CONNECT-SPEC B6). */
+private fun verificationLine(result: FleetProbeResult): String = buildString {
+    append("Verified ✓")
+    result.serverVersion?.let { append(" · v").append(it) }
+    append(" · groups ").append(capBit(result.groupsSupported))
+    append(" · relay ").append(capBit(result.relaySupported))
 }

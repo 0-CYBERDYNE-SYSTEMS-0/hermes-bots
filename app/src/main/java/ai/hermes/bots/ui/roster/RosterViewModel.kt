@@ -46,6 +46,13 @@ class RosterViewModel(app: Application) : AndroidViewModel(app) {
         .map { it.isNotEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /** Pull-to-refresh state (immediate poll of every Ready gateway). */
+    val refreshing: StateFlow<Boolean> = graph.roster.refreshing
+
+    fun refresh() {
+        viewModelScope.launch { graph.roster.refreshNow() }
+    }
+
     fun markRead(connectionId: String, botName: String) {
         graph.roster.markRead(connectionId, botName)
     }

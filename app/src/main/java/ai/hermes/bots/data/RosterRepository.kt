@@ -11,6 +11,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +66,32 @@ class RosterRepository(
 
     private val _roster = MutableStateFlow<List<RosterEntry>>(emptyList())
     val roster: StateFlow<List<RosterEntry>> = _roster
+
+    private val _refreshing = MutableStateFlow(false)
+
+    /** True while a pull-to-refresh-triggered immediate poll is in flight. */
+    val refreshing: StateFlow<Boolean> = _refreshing
+
+    /**
+     * Pull-to-refresh: poll every live, Ready connection right now instead of waiting for
+     * the next 5 s tick. Safe against overlap (busy-refresh is a no-op); scheduled loops
+     * keep running untouched.
+     */
+    suspend fun refreshNow() {
+        if (_refreshing.value) return
+        _refreshing.value = true
+        try {
+            coroutineScope {
+                manager.live.value.forEach { (id, conn) ->
+                    if (conn.gateway.state.value is SocketState.Ready) {
+                        launch { runCatching { pollOnce(id, conn) } }
+                    }
+                }
+            }
+        } finally {
+            _refreshing.value = false
+        }
+    }
 
     private val _avatars = MutableStateFlow<Map<String, AvatarImage>>(emptyMap())
     val avatars: StateFlow<Map<String, AvatarImage>> = _avatars

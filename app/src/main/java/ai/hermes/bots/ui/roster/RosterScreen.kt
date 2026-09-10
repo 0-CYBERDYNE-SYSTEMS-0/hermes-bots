@@ -48,6 +48,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -92,6 +93,7 @@ fun RosterScreen(
     val collisions by vm.collisionNames.collectAsState()
     val connections by vm.connections.collectAsState()
     val assistant by vm.assistant.collectAsState()
+    val refreshing by vm.refreshing.collectAsState()
     var search by remember { mutableStateOf("") }
     var showHidden by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -164,181 +166,187 @@ fun RosterScreen(
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = Dimens.GutterScreen)) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-                    .heightIn(min = 40.dp),
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { vm.refresh() },
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Column(Modifier.fillMaxSize().padding(horizontal = Dimens.GutterScreen)) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .heightIn(min = 40.dp),
                 ) {
-                    Icon(
-                        Icons.Filled.Search,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    BasicTextField(
-                        value = search,
-                        onValueChange = { search = it },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(searchFocus)
-                            .padding(vertical = 10.dp),
-                        decorationBox = { inner ->
-                            androidx.compose.foundation.layout.Box {
-                                if (search.isEmpty()) {
-                                    Text(
-                                        "Search bots and group chats",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                    )
-                }
-            }
-            val active = roster.filter { it.activeNow }
-            if (active.isNotEmpty()) {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(
-                        "Active now",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                    )
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        active.forEach { entry ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .clip(MaterialTheme.shapes.medium)
-                                    .clickable {
-                                        vm.markRead(entry.bot.connectionId, entry.bot.name)
-                                        onOpenChat(entry.bot.connectionId, entry.bot.name)
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        BasicTextField(
+                            value = search,
+                            onValueChange = { search = it },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(searchFocus)
+                                .padding(vertical = 10.dp),
+                            decorationBox = { inner ->
+                                androidx.compose.foundation.layout.Box {
+                                    if (search.isEmpty()) {
+                                        Text(
+                                            "Search bots and group chats",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
-                                    .padding(4.dp),
-                            ) {
-                                Box {
-                                    FaceAvatar(entry.bot.name, 56.dp, real = avatars[avatarKey(entry.bot)])
-                                    PulsingDot(
-                                        dotSize = 12.dp,
-                                        borderColor = MaterialTheme.colorScheme.background,
-                                        modifier = Modifier.align(Alignment.BottomEnd),
+                                    inner()
+                                }
+                            },
+                        )
+                    }
+                }
+                val active = roster.filter { it.activeNow }
+                if (active.isNotEmpty()) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(
+                            "Active now",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        ) {
+                            active.forEach { entry ->
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clip(MaterialTheme.shapes.medium)
+                                        .clickable {
+                                            vm.markRead(entry.bot.connectionId, entry.bot.name)
+                                            onOpenChat(entry.bot.connectionId, entry.bot.name)
+                                        }
+                                        .padding(4.dp),
+                                ) {
+                                    Box {
+                                        FaceAvatar(entry.bot.name, 56.dp, real = avatars[avatarKey(entry.bot)])
+                                        PulsingDot(
+                                            dotSize = 12.dp,
+                                            borderColor = MaterialTheme.colorScheme.background,
+                                            modifier = Modifier.align(Alignment.BottomEnd),
+                                        )
+                                    }
+                                    Text(
+                                        entry.bot.displayName ?: entry.bot.name,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.width(64.dp),
                                     )
                                 }
-                                Text(
-                                    entry.bot.displayName ?: entry.bot.name,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.width(64.dp),
-                                )
                             }
                         }
                     }
                 }
-            }
-            if (hiddenCount > 0) {
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    FilterChip(
-                        selected = showHidden,
-                        onClick = { showHidden = !showHidden },
-                        label = { Text("Hidden ($hiddenCount)") },
-                    )
-                }
-            }
-            if (visible.isEmpty()) {
-                if (showHidden) {
-                    Text(
-                        "No hidden bots",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(8.dp),
-                    )
-                } else {
-                    ai.hermes.bots.ui.components.EmptyState(
-                        title = "No bots yet",
-                        body = "Add one, or check Gateways.",
-                        avatar = {
-                            androidx.compose.foundation.layout.Box(Modifier.size(96.dp)) {
-                                ai.hermes.bots.ui.components.FaceAvatar(
-                                    "hermes-roster-a",
-                                    56.dp,
-                                    modifier = Modifier.align(Alignment.CenterStart),
-                                )
-                                ai.hermes.bots.ui.components.FaceAvatar(
-                                    "hermes-roster-b",
-                                    56.dp,
-                                    modifier = Modifier.align(Alignment.Center),
-                                )
-                                ai.hermes.bots.ui.components.FaceAvatar(
-                                    "hermes-roster-c",
-                                    56.dp,
-                                    modifier = Modifier.align(Alignment.CenterEnd),
-                                )
-                            }
-                        },
-                    )
-                }
-            }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (pinnedAssistant != null) {
-                    item(key = "assistant-header") {
-                        ai.hermes.bots.ui.components.SectionHeader("Assistant")
+                if (hiddenCount > 0) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        FilterChip(
+                            selected = showHidden,
+                            onClick = { showHidden = !showHidden },
+                            label = { Text("Hidden ($hiddenCount)") },
+                        )
                     }
-                    item(key = "assistant-${pinnedAssistant.bot.connectionId}") {
-                        BotRowItem(
-                            modifier = Modifier.animateItem(),
-                            entry = pinnedAssistant,
-                            avatar = avatars[avatarKey(pinnedAssistant.bot)],
-                            gatewayLabel = gatewayLabel(pinnedAssistant),
-                            onClick = {
-                                vm.markRead(pinnedAssistant.bot.connectionId, pinnedAssistant.bot.name)
-                                onOpenChat(pinnedAssistant.bot.connectionId, pinnedAssistant.bot.name)
+                }
+                if (visible.isEmpty()) {
+                    if (showHidden) {
+                        Text(
+                            "No hidden bots",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    } else {
+                        ai.hermes.bots.ui.components.EmptyState(
+                            title = "No bots yet",
+                            body = "Add one, or check Gateways.",
+                            avatar = {
+                                androidx.compose.foundation.layout.Box(Modifier.size(96.dp)) {
+                                    ai.hermes.bots.ui.components.FaceAvatar(
+                                        "hermes-roster-a",
+                                        56.dp,
+                                        modifier = Modifier.align(Alignment.CenterStart),
+                                    )
+                                    ai.hermes.bots.ui.components.FaceAvatar(
+                                        "hermes-roster-b",
+                                        56.dp,
+                                        modifier = Modifier.align(Alignment.Center),
+                                    )
+                                    ai.hermes.bots.ui.components.FaceAvatar(
+                                        "hermes-roster-c",
+                                        56.dp,
+                                        modifier = Modifier.align(Alignment.CenterEnd),
+                                    )
+                                }
                             },
-                            onLongClick = { sheetFor = pinnedAssistant },
                         )
                     }
                 }
-                sections.forEach { (sectionId, entries) ->
-                    item(key = "header-${sectionId ?: "_"}") {
-                        ai.hermes.bots.ui.components.SectionHeader(
-                            sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots",
-                        )
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (pinnedAssistant != null) {
+                        item(key = "assistant-header") {
+                            ai.hermes.bots.ui.components.SectionHeader("Assistant")
+                        }
+                        item(key = "assistant-${pinnedAssistant.bot.connectionId}") {
+                            BotRowItem(
+                                modifier = Modifier.animateItem(),
+                                entry = pinnedAssistant,
+                                avatar = avatars[avatarKey(pinnedAssistant.bot)],
+                                gatewayLabel = gatewayLabel(pinnedAssistant),
+                                onClick = {
+                                    vm.markRead(pinnedAssistant.bot.connectionId, pinnedAssistant.bot.name)
+                                    onOpenChat(pinnedAssistant.bot.connectionId, pinnedAssistant.bot.name)
+                                },
+                                onLongClick = { sheetFor = pinnedAssistant },
+                            )
+                        }
                     }
-                    itemsIndexed(entries, key = { _, e -> "${e.bot.connectionId}:${e.bot.name}" }) { _, entry ->
-                        BotRowItem(
-                            modifier = Modifier.animateItem(),
-                            entry = entry,
-                            avatar = avatars[avatarKey(entry.bot)],
-                            gatewayLabel = gatewayLabel(entry),
-                            onClick = {
-                                vm.markRead(entry.bot.connectionId, entry.bot.name)
-                                onOpenChat(entry.bot.connectionId, entry.bot.name)
-                            },
-                            onLongClick = { sheetFor = entry },
-                        )
+                    sections.forEach { (sectionId, entries) ->
+                        item(key = "header-${sectionId ?: "_"}") {
+                            ai.hermes.bots.ui.components.SectionHeader(
+                                sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots",
+                            )
+                        }
+                        itemsIndexed(entries, key = { _, e -> "${e.bot.connectionId}:${e.bot.name}" }) { _, entry ->
+                            BotRowItem(
+                                modifier = Modifier.animateItem(),
+                                entry = entry,
+                                avatar = avatars[avatarKey(entry.bot)],
+                                gatewayLabel = gatewayLabel(entry),
+                                onClick = {
+                                    vm.markRead(entry.bot.connectionId, entry.bot.name)
+                                    onOpenChat(entry.bot.connectionId, entry.bot.name)
+                                },
+                                onLongClick = { sheetFor = entry },
+                            )
+                        }
                     }
-                }
+            }
             }
         }
     }

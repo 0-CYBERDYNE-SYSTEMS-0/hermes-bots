@@ -430,11 +430,18 @@ private fun BotRowItem(
     gatewayLabel: String? = null,
 ) {
     val bot = entry.bot
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     Row(
         modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            )
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

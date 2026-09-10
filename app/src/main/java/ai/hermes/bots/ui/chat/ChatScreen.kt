@@ -135,6 +135,8 @@ fun ChatScreen(
     val showJump = userScrolledUp && !atBottom && rows.isNotEmpty()
 
     var headerMenu by remember { mutableStateOf(false) }
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val tick = { haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -304,14 +306,19 @@ fun ChatScreen(
                 placeholder = if (ui.streaming) "Steer the running turn…" else "Message $botName",
                 streaming = ui.streaming,
                 onSend = {
+                    tick()
                     vm.send(draft)
                     draft = ""
                 },
                 onSteer = {
+                    tick()
                     vm.steer(draft.trim())
                     draft = ""
                 },
-                onInterrupt = { vm.interrupt() },
+                onInterrupt = {
+                    tick()
+                    vm.interrupt()
+                },
                 modifier = Modifier.padding(vertical = 6.dp),
             )
         }
@@ -558,6 +565,7 @@ private fun ChoiceRow(
     enabled: Boolean,
     onChoose: () -> Unit,
 ) {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -571,7 +579,10 @@ private fun ChoiceRow(
                     Modifier
                 },
             )
-            .clickable(enabled = enabled) { onChoose() }
+            .clickable(enabled = enabled) {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onChoose()
+            }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),

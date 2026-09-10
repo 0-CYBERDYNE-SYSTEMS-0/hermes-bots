@@ -43,6 +43,7 @@ data class EditorUiState(
     val skills: List<BotAdmin.SkillRow> = emptyList(),
     val toolsets: List<BotAdmin.ToolsetRow> = emptyList(),
     val modelOptions: List<ModelOption> = emptyList(),
+    val modelOptionsLoading: Boolean = false,
     val pickedAvatar: AvatarImage? = null,
     val loading: Boolean = false,
     val saving: Boolean = false,
@@ -120,7 +121,9 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
     }
 
     fun loadModelOptions() {
+        if (_ui.value.modelOptionsLoading) return
         viewModelScope.launch {
+            _ui.update { it.copy(modelOptionsLoading = true) }
             try {
                 val connId = _ui.value.createOnConnectionId.ifBlank { editConnectionId ?: defaultConnectionId() }
                 val gw = gatewayFor(connId)
@@ -138,9 +141,9 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
                     }.orEmpty()
                     models.map { ModelOption(provider, it) }
                 }.orEmpty()
-                _ui.update { it.copy(modelOptions = options) }
+                _ui.update { it.copy(modelOptions = options, modelOptionsLoading = false) }
             } catch (e: Exception) {
-                _ui.update { it.copy(error = "model options failed: ${e.message}") }
+                _ui.update { it.copy(modelOptionsLoading = false, error = "model options failed: ${e.message}") }
             }
         }
     }

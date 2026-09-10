@@ -197,6 +197,10 @@ fun BotEditorScreen(
                 }
             }
             var advanced by remember { mutableStateOf(false) }
+            // Models are fetched the moment the section is opened — no manual "load" step.
+            LaunchedEffect(advanced) {
+                if (advanced && ui.modelOptions.isEmpty()) vm.loadModelOptions()
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -244,28 +248,45 @@ fun BotEditorScreen(
                             singleLine = true,
                         )
                     }
-                    OutlinedButton(onClick = { vm.loadModelOptions() }) { Text("Load model options") }
-                    if (ui.modelOptions.isNotEmpty()) {
-                        ExposedDropdownMenuBox(expanded = modelMenu, onExpandedChange = { modelMenu = it }) {
-                            OutlinedTextField(
-                                value = "${ui.provider}/${ui.model}".ifBlank { "pick a model" },
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Pick from loaded options") },
-                                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenu) },
-                            )
-                            ExposedDropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
-                                ui.modelOptions.take(50).forEach { opt ->
-                                    DropdownMenuItem(
-                                        text = { Text("${opt.provider} / ${opt.model}") },
-                                        onClick = {
-                                            vm.set { it.copy(provider = opt.provider, model = opt.model) }
-                                            modelMenu = false
-                                        },
-                                    )
+                    when {
+                        ui.modelOptionsLoading -> {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text(
+                                    "Fetching models…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        ui.modelOptions.isNotEmpty() -> {
+                            ExposedDropdownMenuBox(expanded = modelMenu, onExpandedChange = { modelMenu = it }) {
+                                OutlinedTextField(
+                                    value = "${ui.provider}/${ui.model}".ifBlank { "pick a model" },
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Model — ${ui.modelOptions.size} available") },
+                                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenu) },
+                                )
+                                ExposedDropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
+                                    ui.modelOptions.take(50).forEach { opt ->
+                                        DropdownMenuItem(
+                                            text = { Text("${opt.provider} / ${opt.model}") },
+                                            onClick = {
+                                                vm.set { it.copy(provider = opt.provider, model = opt.model) }
+                                                modelMenu = false
+                                            },
+                                        )
+                                    }
                                 }
                             }
+                        }
+                        else -> {
+                            OutlinedButton(onClick = { vm.loadModelOptions() }) { Text("Browse models") }
                         }
                     }
                 }

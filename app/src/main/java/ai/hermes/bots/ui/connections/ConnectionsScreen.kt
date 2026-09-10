@@ -327,7 +327,9 @@ private fun ConnectionEditDialog(
                             scope.launch {
                                 val auth = if (useBasic) GatewayAuth.BasicAuth(username, password)
                                 else GatewayAuth.TokenAuth(token)
-                                verifyResult = onVerify(baseUrl, auth)
+                                // Same normalization Save applies — a scheme-less address
+                                // must Test the way it will connect, not fail spuriously.
+                                verifyResult = onVerify(ai.hermes.bots.data.FleetProvisioning.normalizeBaseUrl(baseUrl), auth)
                                 verifying = false
                             }
                         },
@@ -368,25 +370,26 @@ private fun ConnectionEditDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    val auth = if (useBasic) GatewayAuth.BasicAuth(username.trim(), password)
-                    else GatewayAuth.TokenAuth(token.trim())
-                    onSave(
-                        (initial ?: ConnectionRecord(
-                            id = java.util.UUID.randomUUID().toString(),
-                            label = "",
-                            baseUrl = "",
-                            auth = auth,
-                        )).copy(
-                            label = label.trim().ifEmpty { "Gateway" },
-                            baseUrl = baseUrl.trim(),
-                            auth = auth,
-                        ),
-                    )
-                },
-                enabled = baseUrl.isNotBlank() && (useBasic || token.isNotBlank()),
-            ) { Text("Save") }
+                TextButton(
+                    onClick = {
+                        val normalizedUrl = ai.hermes.bots.data.FleetProvisioning.normalizeBaseUrl(baseUrl.trim())
+                        val auth = if (useBasic) GatewayAuth.BasicAuth(username.trim(), password)
+                        else GatewayAuth.TokenAuth(token.trim())
+                        onSave(
+                            (initial ?: ConnectionRecord(
+                                id = java.util.UUID.randomUUID().toString(),
+                                label = "",
+                                baseUrl = "",
+                                auth = auth,
+                            )).copy(
+                                label = label.trim().ifEmpty { labelFromUrl(normalizedUrl) },
+                                baseUrl = normalizedUrl,
+                                auth = auth,
+                            ),
+                        )
+                    },
+                    enabled = baseUrl.isNotBlank() && (useBasic || token.isNotBlank()),
+                ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
@@ -399,3 +402,12 @@ private fun verificationLine(result: FleetProbeResult): String = buildString {
     append(" · groups ").append(capBit(result.groupsSupported))
     append(" · relay ").append(capBit(result.relaySupported))
 }
+
+/** Auto-label: "http://127.0.0.1:9119" → "127.0.0.1:9119"; host[:port] never collides. */
+private fun labelFromUrl(url: String): String =
+    url
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .substringBefore('/')
+        .trim()
+        .ifBlank { "Gateway" }

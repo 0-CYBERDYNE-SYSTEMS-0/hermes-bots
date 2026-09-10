@@ -205,12 +205,19 @@ Server pushes `approval.request {request_id, command?, choices:["once","session"
   (`tui_gateway/methods_groups.py:489-495`, `gateway/hosted_rooms.py:1111-1150`).
 - `groups.disband {room_id, cancel_id?}` (`398`), `groups.stop {room_id, cancel_id?}` (`431`)
 - `groups.approve {room_id, member_id, task_id, execution_generation, choice, request_id}` (`439`), `groups.retry {room_id, task_id}` (`450`)
+- Pending user actions ride `groups.state` → `driver_status.pending_actions` (NOT in
+  `groups.log`; the log's event-kind taxonomy excludes them): approval actions are
+  `{kind:"approval", task_id, execution_generation, run_id, session_id, request_id,
+  approval:{request_id, choices:["once","deny"], command?…}, member_id}`; retry actions are
+  `{kind:"retry", task_id}` for indeterminate tasks; `choice` is `"once"` or `"deny"`
+  (`tui_gateway/methods_groups.py:369-377`, `tui_gateway/hosted_room_service.py:74,296-304,532-548`,
+  `tui_gateway/hosted_room_driver.py:392-405`).
 - Group member sessions are created with `room_plumbing:true`, hidden.
 
 ### 5.7 Bot relay (cross-connection A2A — the app becomes the relay)
 `tui_gateway/methods_bot_relay.py`. Desktop reference loops: `apps/desktop/src/plugins/hermes-bots/relay.ts:29-68,247-311,316-483`.
-- `bot_relay.roster.sync {agents:[{profile,handle,connection_id,connection_label,title,description}]}` → `{count}` — push the roster of agents on *other* connections to each gateway (`39-47`). **Loop: every 60 s.**
-- `bot_relay.outbox.drain {}` → `{envelopes:[{id,message,target_connection,target_profile}]}` — atomic claim (`50-58`). **Loop: every 30 s + immediately on event `bot_relay.outbox.pending`** (debounced).
+- `bot_relay.roster.sync {agents:[{profile,handle,connection_id,connection_label,title,description}]}` → `{count}` — push the roster of agents on *other* connections to each gateway (`39-47`). **Loop: every 60 s.** **Runtime finding (2026-09-10): write_remote_roster on our install MERGE-UPSERTS by (connection_id, profile)** — a push owns its connections' rows and preserves other connections' rows (empty push = no-op) — because this install runs several relay clients (desktop app + this app) sharing one `~/.hermes/bot_relay/roster.json`; the upstream replace semantics let each client's sync erase the others', breaking `message_agent` target resolution (see `docs/patches/hermes-agent-relay-multi-client.patch`; upstream may differ).
+- `bot_relay.outbox.drain {connections?: [connection_id,…]}` → `{envelopes:[{id,message,target_connection,target_profile}]}` — atomic claim (`50-58`). **Loop: every 30 s + immediately on event `bot_relay.outbox.pending`** (debounced). **Runtime finding (2026-09-10): the app always sends `connections` = its own connection ids** — the claim then skips envelopes addressed to other clients' connections (they resolve via the 900 s envelope TTL `'queued_expired'` instead of being stolen); omitting the param keeps upstream claim-everything behavior.
 - `bot_relay.deliver {profile, message}` → `{reply}` — blocking on the **target** connection's socket; budget = 120 s lock-wait + 600 s turn × 2 attempts ⇒ **client timeout must exceed ~1320 s** (`28-29`). Errors 4090/4091/4092/5092 with `data.reason`, 5093 timeout.
 - `bot_relay.reply {id, reply?, error?, reason?}` → `{ok:true}` — post back on the **sender's** socket (`146-161`).
 - Server-side spool: `~/.hermes/bot_relay/{claimed,outbox,replies,roster.json}`.

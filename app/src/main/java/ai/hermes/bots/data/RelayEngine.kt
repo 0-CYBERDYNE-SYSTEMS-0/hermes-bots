@@ -21,11 +21,13 @@ import java.util.logging.Logger
  * Cross-connection A2A relay — the app IS the relay (BOTS-MODE-PARITY.md §8, verbatim timings):
  * roster loop every 60 s pushes the union of OTHER connections' agents to each gateway via
  * bot_relay.roster.sync; drain loop every 30 s (+ immediate, debounced, on
- * bot_relay.outbox.pending) drains each sender's outbox, delivers each envelope on the TARGET
- * connection's socket with a >1320 s budget, then posts bot_relay.reply back on the sender's
- * socket. Gateways whose RPCs are missing (-32601) are NOT latched (B5): they are marked
- * Unsupported and re-probed on every reconnect (or at the roster cadence), so a gateway that
- * gains relay support is picked up without a restart.
+ * bot_relay.outbox.pending) drains each sender's outbox — scoped to envelopes addressed to OUR
+ * connections, so coexisting relay clients (desktop app on a shared install) never steal each
+ * other's envelopes — delivers each envelope on the TARGET connection's socket with a >1320 s
+ * budget, then posts bot_relay.reply back on the sender's socket. Gateways whose RPCs are
+ * missing (-32601) are NOT latched (B5): they are marked Unsupported and re-probed on every
+ * reconnect (or at the roster cadence), so a gateway that gains relay support is picked up
+ * without a restart.
  */
 class RelayEngine(
     private val manager: GatewayManager,
@@ -169,9 +171,16 @@ class RelayEngine(
     }
 
     private suspend fun drainOnce(connectionId: String, conn: ConnectionLive) {
+        // Scope the claim to OUR connections: a shared install can have several relay clients
+        // (desktop app + this app) draining one outbox, and claiming envelopes addressed to a
+        // connection we can't deliver (or that another client owns) steals them from their
+        // owner. Unowned leftovers resolve via the gateway's envelope TTL ('queued_expired').
+        val params = buildJsonObject {
+            put("connections", JsonArray(manager.live.value.keys.map { JsonPrimitive(it) }))
+        }
         val result = conn.gateway.request(
             Catalog.METHOD_BOT_RELAY_OUTBOX_DRAIN,
-            JsonObject(emptyMap()),
+            params,
             60_000,
         )
         // A successful drain poll proves the relay RPCs are live — stamp it for the badge (B5).

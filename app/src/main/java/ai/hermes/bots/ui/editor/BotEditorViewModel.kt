@@ -133,10 +133,15 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
                     val provider = listOf("slug", "id", "name").firstNotNullOfOrNull { k ->
                         (po[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
                     } ?: return@flatMap emptyList()
+                    // Gateways emit model entries as bare strings ("claude-sonnet-5") —
+                    // tolerate objects too, but never drop the string form (all-models-empty bug).
                     val models = (po["models"] as? JsonArray)?.mapNotNull { m ->
-                        val mo = m as? JsonObject ?: return@mapNotNull null
-                        listOf("id", "model", "name", "slug").firstNotNullOfOrNull { k ->
-                            (mo[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                        when {
+                            m is JsonPrimitive && m.isString -> m.content
+                            m is JsonObject -> listOf("id", "model", "name", "slug").firstNotNullOfOrNull { k ->
+                                (m[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            }
+                            else -> null
                         }
                     }.orEmpty()
                     models.map { ModelOption(provider, it) }

@@ -2,11 +2,14 @@ package ai.hermes.bots.ui.groups
 
 import ai.hermes.bots.data.RosterEntry
 import ai.hermes.bots.ui.theme.Dimens
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -180,14 +183,21 @@ fun GroupsScreen(
                             .graphicsLayer { scaleX = scale; scaleY = scale },
                         interactionSource = interaction,
                     ) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(room.name, style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                room.members.joinToString(", ").ifBlank { "no members" },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
+                        Row(
+                            Modifier.padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            StackedAvatars(room.members)
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(room.name, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    room.members.joinToString(", ").ifBlank { "no members" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                )
+                            }
                         }
                     }
                 }
@@ -207,6 +217,25 @@ fun GroupsScreen(
                 creating = false
             },
         )
+    }
+}
+
+/** First two members as an overlapping face pair; ring separates the two faces. */
+@Composable
+private fun StackedAvatars(members: List<String>) {
+    androidx.compose.foundation.layout.Box {
+        members.getOrNull(0)?.let {
+            ai.hermes.bots.ui.components.FaceAvatar(it, 28.dp)
+        }
+        members.getOrNull(1)?.let {
+            ai.hermes.bots.ui.components.FaceAvatar(
+                it,
+                28.dp,
+                modifier = Modifier
+                    .offset(x = 16.dp)
+                    .border(2.dp, MaterialTheme.colorScheme.surfaceContainerLow, CircleShape),
+            )
+        }
     }
 }
 

@@ -24,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,8 +40,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -75,6 +78,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 
@@ -102,12 +106,31 @@ fun ChatScreen(
     val presence by vm.presence.collectAsState()
     val gatewayLabel by vm.gatewayLabel.collectAsState()
     var draft by remember { mutableStateOf("") }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val listState = rememberLazyListState()
     val rows = remember(ui.items, itemTimes) { Transcript.build(ui.items, itemTimes) }
 
-    LaunchedEffect(rows.size, ui.statusText) {
-        if (rows.isNotEmpty()) listState.animateScrollToItem(rows.lastIndex)
+    // Stick to the bottom ONLY while the reader is there. Scrolling up to reread history
+    // must never be hijacked by the next streamed chunk — a jump pill offers the way back.
+    val atBottom by remember {
+        androidx.compose.runtime.derivedStateOf {
+            val info = listState.layoutInfo
+            info.visibleItemsInfo.lastOrNull()?.let { it.index >= info.totalItemsCount - 1 } ?: true
+        }
     }
+    var userScrolledUp by remember { mutableStateOf(false) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
+                userScrolledUp = true
+            }
+        }
+    }
+    LaunchedEffect(atBottom) { if (atBottom) userScrolledUp = false }
+    LaunchedEffect(rows.size, ui.statusText) {
+        if (rows.isNotEmpty() && atBottom) listState.animateScrollToItem(rows.lastIndex)
+    }
+    val showJump = userScrolledUp && !atBottom && rows.isNotEmpty()
 
     var headerMenu by remember { mutableStateOf(false) }
     Scaffold(
@@ -187,33 +210,63 @@ fun ChatScreen(
                     )
                 }
             } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = if (ui.approval != null) 140.dp else 8.dp),
-                ) {
-                    if (rows.isEmpty()) {
-                        item(key = "empty") {
-                            ai.hermes.bots.ui.components.EmptyState(
-                                title = "Say hi to $botName",
-                                body = "This conversation lives here forever — anything $botName does lands in it.",
-                                avatar = {
-                                    ai.hermes.bots.ui.components.FaceAvatar(
-                                        botName,
-                                        72.dp,
-                                        real = avatars["$connectionId:$botName"],
-                                    )
-                                },
-                            )
+                Box(Modifier.weight(1f)) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = if (ui.approval != null) 140.dp else 8.dp),
+                    ) {
+                        if (rows.isEmpty()) {
+                            item(key = "empty") {
+                                ai.hermes.bots.ui.components.EmptyState(
+                                    title = "Say hi to $botName",
+                                    body = "This conversation lives here forever — anything $botName does lands in it.",
+                                    avatar = {
+                                        ai.hermes.bots.ui.components.FaceAvatar(
+                                            botName,
+                                            72.dp,
+                                            real = avatars["$connectionId:$botName"],
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                        items(rows, key = { it.key }) { row ->
+                            androidx.compose.foundation.layout.Box(Modifier.animateItem()) {
+                                when (row) {
+                                    is TranscriptRow.Message -> ChatItemView(row.item, botName)
+                                    is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
+                                }
+                            }
                         }
                     }
-                    items(rows, key = { it.key }) { row ->
-                        androidx.compose.foundation.layout.Box(Modifier.animateItem()) {
-                            when (row) {
-                                is TranscriptRow.Message -> ChatItemView(row.item, botName)
-                                is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
-                            }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showJump,
+                        enter = fadeIn(tween(150)) + androidx.compose.animation.scaleIn(tween(150)),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 4.dp, bottom = 12.dp),
+                    ) {
+                        val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            shadowElevation = 3.dp,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable {
+                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    userScrolledUp = false
+                                    scope?.launch { listState.animateScrollToItem(rows.lastIndex) }
+                                },
+                        ) {
+                            Icon(
+                                Icons.Filled.KeyboardArrowDown,
+                                contentDescription = "Jump to latest",
+                                modifier = Modifier.padding(8.dp).size(24.dp),
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
                         }
                     }
                 }

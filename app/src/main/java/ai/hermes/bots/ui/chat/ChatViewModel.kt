@@ -42,6 +42,13 @@ class ChatViewModel(
     private val _ui = MutableStateFlow(ChatUiState())
     val ui: StateFlow<ChatUiState> = _ui
 
+    // SV-01: true only after the session successfully opened; reset when open fails.
+    private val _sessionOpen = MutableStateFlow(false)
+
+    /** The composer may only send while the session is open and not loading. */
+    val canSend: StateFlow<Boolean> = combine(_ui, _sessionOpen) { st, open -> open && !st.loading }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     // Presentation-only receive stamps for time separators (audit A5): item id → wall clock
     // at first appearance. History from session.resume gets "now" — gaps still separate turns.
     private val _itemTimes = MutableStateFlow<Map<String, Long>>(emptyMap())
@@ -104,8 +111,14 @@ class ChatViewModel(
         }
     }
 
+    /** SV-01: re-open after a failed open — backs the "Try again" affordance in ChatScreen. */
+    fun retry() {
+        viewModelScope.launch { open() }
+    }
+
     private suspend fun open() {
         try {
+            _ui.update { it.copy(loading = true, error = null) }
             val row = withTimeout(15_000) {
                 graph.roster.roster
                     .first { rows -> rows.any { it.bot.connectionId == connectionId && it.bot.name == botName } }
@@ -132,12 +145,14 @@ class ChatViewModel(
             _ui.update { it.copy(botModel = row.model) }
             startCollectors()
         } catch (e: Exception) {
+            _sessionOpen.value = false
             _ui.update { it.copy(loading = false, error = e.message ?: "failed to open chat") }
         }
     }
 
     private fun adopt(result: JsonObject) {
         runtimeSessionId = (result["session_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        _sessionOpen.value = runtimeSessionId != null
         val card = CanonicalChat.parseCard(
             Catalog.EVENT_APPROVAL_REQUEST,
             result["pending_approval"] as? JsonObject,

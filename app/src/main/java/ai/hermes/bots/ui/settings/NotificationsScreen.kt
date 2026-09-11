@@ -4,6 +4,7 @@ import ai.hermes.bots.data.AvatarImage
 import ai.hermes.bots.data.NotificationEntry
 import ai.hermes.bots.data.RosterEntry
 import ai.hermes.bots.ui.components.FaceAvatar
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,12 +26,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
@@ -48,6 +51,7 @@ import java.util.Locale
 @Composable
 fun NotificationsScreen(
     onBack: () -> Unit,
+    onOpenChat: (connectionId: String, botName: String) -> Unit = { _, _ -> },
     vm: SettingsViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
@@ -60,6 +64,10 @@ fun NotificationsScreen(
     val history by vm.notificationHistory.collectAsState()
     val roster by vm.roster.collectAsState()
     val avatars by vm.avatars.collectAsState()
+
+    // Opening the screen stamps the seen watermark, so the roster bell badge clears (SV-14).
+    val app = LocalContext.current.applicationContext as ai.hermes.bots.HermesBotsApp
+    LaunchedEffect(Unit) { app.graph.settings.markHistorySeen() }
 
     Scaffold(
         topBar = {
@@ -98,7 +106,7 @@ fun NotificationsScreen(
             items(rows, key = { it.key }) { row ->
                 when (row) {
                     is NotifRow.Header -> DayHeader(row.label)
-                    is NotifRow.Item -> NotificationRow(row.item, avatars[row.item.avatarKey])
+                    is NotifRow.Item -> NotificationRow(row.item, avatars[row.item.avatarKey], onOpenChat)
                 }
             }
         }
@@ -210,9 +218,26 @@ private fun DayHeader(label: String) {
 }
 
 @Composable
-private fun NotificationRow(item: ResolvedNotification, avatar: AvatarImage?) {
+private fun NotificationRow(
+    item: ResolvedNotification,
+    avatar: AvatarImage?,
+    onOpenChat: (connectionId: String, botName: String) -> Unit,
+) {
+    // Rows recorded with a chat target are tappable; legacy entries (no ids) stay inert.
+    val chatTarget = item.entry.connectionId
+        ?.takeIf { it.isNotBlank() }
+        ?.let { conn -> item.entry.botName?.takeIf { it.isNotBlank() }?.let { conn to it } }
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        Modifier
+            .fillMaxWidth()
+            .then(
+                if (chatTarget != null) {
+                    Modifier.clickable { chatTarget?.let { (conn, bot) -> onOpenChat(conn, bot) } }
+                } else {
+                    Modifier
+                },
+            )
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {

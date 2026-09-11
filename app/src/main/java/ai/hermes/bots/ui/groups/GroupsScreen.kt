@@ -73,7 +73,14 @@ fun GroupsScreen(
     var creating by remember { mutableStateOf(false) }
 
     LaunchedEffect(ui.message) { ui.message?.let { snackbar.showSnackbar(it) } }
-    LaunchedEffect(ui.error) { ui.error?.let { snackbar.showSnackbar(it) } }
+    LaunchedEffect(ui.error) {
+        ui.error?.let { raw ->
+            snackbar.showSnackbar(
+                ai.hermes.bots.ui.util.Humanize.friendlyError(raw, ui.connectionLabel.ifBlank { "this gateway" })
+                    ?: "Something went wrong — try again.",
+            )
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -101,6 +108,30 @@ fun GroupsScreen(
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
                     CircularProgressIndicator()
                 }
+                return@Column
+            }
+            ui.probeError?.let { raw ->
+                // Probe failed and caps are unknown — a designed, retryable failure state (SV-18).
+                ai.hermes.bots.ui.components.EmptyState(
+                    title = "Group chats are out of reach",
+                    body = ai.hermes.bots.ui.util.Humanize.friendlyError(raw, ui.connectionLabel.ifBlank { "this gateway" })
+                        ?: "Couldn't reach the gateway — check Gateways and try again.",
+                    avatar = {
+                        androidx.compose.foundation.layout.Box(Modifier.size(72.dp)) {
+                            ai.hermes.bots.ui.components.FaceAvatar(
+                                "hermes-noor",
+                                56.dp,
+                                modifier = Modifier.align(Alignment.CenterStart),
+                            )
+                            ai.hermes.bots.ui.components.FaceAvatar(
+                                "hermes-aqua",
+                                56.dp,
+                                modifier = Modifier.align(Alignment.CenterEnd),
+                            )
+                        }
+                    },
+                    cta = { TextButton(onClick = { vm.refresh() }) { Text("Retry") } },
+                )
                 return@Column
             }
             ui.caps?.let { caps ->
@@ -266,6 +297,8 @@ private fun CreateGroupDialog(
                             onCheckedChange = { checked ->
                                 selected.value = if (checked) selected.value + entry.bot.name else selected.value - entry.bot.name
                             },
+                            // Cap at 6: at the limit, selected rows stay tappable (to deselect), rest are disabled.
+                            enabled = entry.bot.name in selected.value || selected.value.size < 6,
                         )
                         Text(entry.bot.displayName ?: entry.bot.name)
                         // B4: quiet gateway chip when this name exists on other gateways too.
@@ -281,7 +314,7 @@ private fun CreateGroupDialog(
                 onClick = {
                     onCreate(name.trim(), roster.filter { it.bot.name in selected.value })
                 },
-                enabled = !busy && name.isNotBlank() && selected.value.size >= 2,
+                enabled = !busy && name.isNotBlank() && selected.value.size in 2..6,
             ) { Text("Create") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

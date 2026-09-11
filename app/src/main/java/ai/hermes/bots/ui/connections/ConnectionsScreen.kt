@@ -173,11 +173,17 @@ private fun ConnectionCard(
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(record.label, style = MaterialTheme.typography.titleMedium)
-                    if (record.primary) {
+                    // SV-07: the star is a real "set as primary" control — the primary's
+                    // star reads selected, the rest invite the tap.
+                    IconButton(onClick = onSetPrimary, modifier = Modifier.size(28.dp)) {
                         Icon(
                             Icons.Filled.Star,
-                            contentDescription = "Primary",
-                            tint = MaterialTheme.colorScheme.secondary,
+                            contentDescription = if (record.primary) "Primary" else "Set as primary",
+                            tint = if (record.primary) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            },
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -276,6 +282,7 @@ private fun ConnectionEditDialog(
     }
     var verifyResult by remember { mutableStateOf<FleetProbeResult?>(null) }
     var verifying by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     AlertDialog(
@@ -363,7 +370,7 @@ private fun ConnectionEditDialog(
                     TextButton(onClick = onSetPrimary) { Text("Set as primary") }
                 }
                 if (initial != null) {
-                    TextButton(onClick = { onDelete(initial.id) }) {
+                    TextButton(onClick = { confirmDelete = true }) {
                         Text("Delete", color = MaterialTheme.colorScheme.error)
                     }
                 }
@@ -393,6 +400,24 @@ private fun ConnectionEditDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+
+    // SV-12: deleting a gateway is destructive (its bots and chats leave the app) — confirm first.
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete gateway") },
+            text = { Text("Delete this gateway? Its bots and chats will disappear from the app.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        initial?.let { onDelete(it.id) }
+                    },
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 /** "Verified ✓ · v0.21.0 · groups ✓ · relay ✓" (FLEET-CONNECT-SPEC B6). */

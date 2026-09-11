@@ -76,7 +76,12 @@ fun RoutinesScreen(
     var editing by remember { mutableStateOf<CronJob?>(null) }
 
     LaunchedEffect(ui.message) { ui.message?.let { snackbar.showSnackbar(it) } }
-    LaunchedEffect(ui.error) { ui.error?.let { snackbar.showSnackbar(it) } }
+    // SV-16: never show the raw gateway error — friendly first, generic fallback.
+    LaunchedEffect(ui.error) {
+        ui.error?.let {
+            snackbar.showSnackbar(Humanize.friendlyError(it, botName) ?: "Something went wrong — try again.")
+        }
+    }
 
     Scaffold(
         topBar = {

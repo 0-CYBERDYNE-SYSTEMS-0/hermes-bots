@@ -366,6 +366,7 @@ fun AnyChatRoomScreen(
     val avatars by vm.avatars.collectAsState()
     var draft by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(ui.entries.size, ui.statusTextForScroll()) {
@@ -394,7 +395,7 @@ fun AnyChatRoomScreen(
                         DropdownMenuItem(text = { Text("Stop current turns") }, onClick = { vm.interruptAll(); menu = false })
                         DropdownMenuItem(
                             text = { Text("Delete this chat", color = MaterialTheme.colorScheme.error) },
-                            onClick = { menu = false; vm.deleteRoom(); onBack() },
+                            onClick = { menu = false; confirmDelete = true },
                         )
                     }
                 },
@@ -466,6 +467,18 @@ fun AnyChatRoomScreen(
                 modifier = Modifier.padding(vertical = 6.dp),
             )
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this chat?") },
+            text = { Text("The transcript on this device will be removed.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; vm.deleteRoom(); onBack() }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
     }
 }
 

@@ -2,6 +2,7 @@ package ai.hermes.bots.data
 
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.protocol.HermesGateway
+import ai.hermes.bots.protocol.ProtocolException
 import ai.hermes.bots.protocol.RpcException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +33,23 @@ data class GroupLogEntry(
     val actor: String?,
     val text: String,
     val raw: JsonObject,
+)
+
+/** One action waiting on the user, from `groups.state` → `driver_status.pending_actions`
+ *  (`tui_gateway/hosted_room_service.py:532-548`, shape `hosted_room_driver.py:392-405`). */
+data class GroupPendingAction(
+    val kind: String,
+    val taskId: String,
+    val memberId: String?,
+    val executionGeneration: Long,
+    val requestId: String?,
+    val command: String?,
+)
+
+data class GroupRoomState(
+    val room: GroupRoom?,
+    val log: List<GroupLogEntry>,
+    val pending: List<GroupPendingAction>,
 )
 
 private fun str(obj: JsonObject?, key: String): String? =
@@ -86,7 +104,7 @@ class GroupRepository(private val manager: GatewayManager) {
         return room
     }
 
-    suspend fun roomState(connectionId: String, roomId: String): Pair<GroupRoom?, List<GroupLogEntry>> {
+    suspend fun roomState(connectionId: String, roomId: String): GroupRoomState {
         val result = gateway(connectionId).request(
             Catalog.METHOD_GROUPS_STATE,
             buildJsonObject { put("room_id", roomId) },
@@ -105,7 +123,12 @@ class GroupRepository(private val manager: GatewayManager) {
         val log = (logResult["events"] as? JsonArray)
             ?.mapNotNull { parseLogEntryPublic(it) }
             .orEmpty()
-        return room to log
+        val pending = (
+            (result["driver_status"] as? JsonObject)?.get("pending_actions") as? JsonArray
+            )
+            ?.mapNotNull { parsePendingAction(it) }
+            .orEmpty()
+        return GroupRoomState(room, log, pending)
     }
 
     suspend fun sendUserMessage(connectionId: String, roomId: String, text: String): Boolean {
@@ -163,6 +186,37 @@ class GroupRepository(private val manager: GatewayManager) {
         )
     }
 
+    /** Resolve a pending approval — `choice` is "once" or "deny" (methods_groups.py:439-448). */
+    suspend fun resolvePending(
+        connectionId: String, roomId: String, action: GroupPendingAction, choice: String,
+    ) {
+        val memberId = action.memberId ?: throw ProtocolException("approval has no member")
+        val requestId = action.requestId ?: throw ProtocolException("approval has no request id")
+        gateway(connectionId).request(
+            Catalog.METHOD_GROUPS_APPROVE,
+            buildJsonObject {
+                put("room_id", roomId)
+                put("member_id", memberId)
+                put("task_id", action.taskId)
+                put("execution_generation", action.executionGeneration)
+                put("choice", choice)
+                put("request_id", requestId)
+            },
+        )
+    }
+
+    /** Retry one indeterminate room task after the user confirms (methods_groups.py:450-461). */
+    suspend fun retryPending(connectionId: String, roomId: String, action: GroupPendingAction) {
+        gateway(connectionId).request(
+            Catalog.METHOD_GROUPS_RETRY,
+            buildJsonObject {
+                put("room_id", roomId)
+                put("task_id", action.taskId)
+            },
+            60_000,
+        )
+    }
+
     data class RoomMember(val profile: String, val displayName: String) {
         fun toParams(): JsonObject = buildJsonObject {
             put("member_id", profile)
@@ -175,6 +229,22 @@ class GroupRepository(private val manager: GatewayManager) {
     companion object {
         fun parseRoomForTest(connectionId: String, element: JsonElement): GroupRoom? = parseRoomPublic(connectionId, element)
         fun parseLogEntryForTest(element: JsonElement): GroupLogEntry? = parseLogEntryPublic(element)
+        fun parsePendingActionForTest(element: JsonElement): GroupPendingAction? = parsePendingAction(element)
+
+        internal fun parsePendingAction(element: JsonElement): GroupPendingAction? {
+            val o = element as? JsonObject ?: return null
+            val kind = str(o, "kind") ?: return null
+            val taskId = str(o, "task_id") ?: return null
+            val approval = o["approval"] as? JsonObject
+            return GroupPendingAction(
+                kind = kind,
+                taskId = taskId,
+                memberId = str(o, "member_id"),
+                executionGeneration = (o["execution_generation"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
+                requestId = str(o, "request_id") ?: str(approval, "request_id"),
+                command = str(approval, "command"),
+            )
+        }
 
         internal fun parseRoomPublic(connectionId: String, element: JsonElement): GroupRoom? {
             val o = element as? JsonObject ?: return null

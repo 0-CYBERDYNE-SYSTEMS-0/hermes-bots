@@ -42,6 +42,7 @@ data class EditorUiState(
     val cloneFrom: String = "",
     val skills: List<BotAdmin.SkillRow> = emptyList(),
     val toolsets: List<BotAdmin.ToolsetRow> = emptyList(),
+    val mcpServers: List<BotAdmin.McpRow> = emptyList(),
     val modelOptions: List<ModelOption> = emptyList(),
     val modelOptionsLoading: Boolean = false,
     val pickedAvatar: AvatarImage? = null,
@@ -95,6 +96,7 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
                             hidden = row.hidden,
                             skills = snap.skills,
                             toolsets = snap.toolsets,
+                            mcpServers = snap.mcpServers,
                         )
                     }
                     // B3: per-bot "can message other bots" state from profiles.list ui_meta.
@@ -118,6 +120,14 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
 
     fun toggleSkill(name: String, enabled: Boolean) = _ui.update { st ->
         st.copy(skills = st.skills.map { if (it.name == name) it.copy(enabled = enabled) else it })
+    }
+
+    fun toggleToolset(name: String, enabled: Boolean) = _ui.update { st ->
+        st.copy(toolsets = st.toolsets.map { if (it.name == name) it.copy(enabled = enabled) else it })
+    }
+
+    fun toggleMcpServer(name: String, enabled: Boolean) = _ui.update { st ->
+        st.copy(mcpServers = st.mcpServers.map { if (it.name == name) it.copy(enabled = enabled) else it })
     }
 
     fun loadModelOptions() {
@@ -176,6 +186,8 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
                             model = s.model.ifBlank { null },
                             provider = s.provider.ifBlank { null },
                             disabledSkills = s.skills.filterNot { it.enabled }.map { it.name }.takeIf { it.isNotEmpty() },
+                            enabledToolsets = s.toolsets.filter { it.enabled }.map { it.name }.takeIf { it.isNotEmpty() },
+                            enabledMcpServers = s.mcpServers.filter { it.enabled }.map { it.name }.takeIf { it.isNotEmpty() },
                         )
                     }
                     var result = try {

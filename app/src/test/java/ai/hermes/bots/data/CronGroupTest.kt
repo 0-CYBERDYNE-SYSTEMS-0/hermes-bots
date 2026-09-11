@@ -76,4 +76,30 @@ class CronGroupTest {
         assertEquals("Alf", m["member_id"]!!.jsonPrimitive.content)
         assertEquals("alf", m["handle"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun `pending action parses approval and retry kinds`() {
+        val approval = GroupRepository.parsePendingActionForTest(
+            json.parseToJsonElement(
+                """{"kind":"approval","task_id":"t1","execution_generation":3,"run_id":"r1",
+                   "session_id":"s1","request_id":"q1","member_id":"default",
+                   "approval":{"request_id":"q1","choices":["once","deny"],"command":"rm -rf /"}}""",
+            ).jsonObject,
+        )!!
+        assertEquals("approval", approval.kind)
+        assertEquals("t1", approval.taskId)
+        assertEquals("default", approval.memberId)
+        assertEquals(3L, approval.executionGeneration)
+        assertEquals("q1", approval.requestId)
+        assertEquals("rm -rf /", approval.command)
+        val retry = GroupRepository.parsePendingActionForTest(
+            json.parseToJsonElement("""{"kind":"retry","task_id":"t2"}""").jsonObject,
+        )!!
+        assertEquals("retry", retry.kind)
+        assertEquals("t2", retry.taskId)
+        assertNull(retry.memberId)
+        assertEquals(0L, retry.executionGeneration)
+        assertNull(retry.command)
+        assertNull(GroupRepository.parsePendingActionForTest(json.parseToJsonElement("""{"task_id":"t3"}""").jsonObject))
+    }
 }

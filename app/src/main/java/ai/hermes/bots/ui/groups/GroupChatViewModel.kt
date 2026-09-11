@@ -2,6 +2,7 @@ package ai.hermes.bots.ui.groups
 
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.GroupLogEntry
+import ai.hermes.bots.data.GroupPendingAction
 import ai.hermes.bots.data.GroupRoom
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -17,9 +18,13 @@ data class GroupChatUiState(
     val loading: Boolean = true,
     val room: GroupRoom? = null,
     val log: List<GroupLogEntry> = emptyList(),
+    /** Actions waiting on the user: approvals to resolve, stuck rounds to retry. */
+    val pending: List<GroupPendingAction> = emptyList(),
     val busy: Boolean = false,
     val error: String? = null,
     val message: String? = null,
+    /** One-shot: the room was disbanded and the screen should navigate back. */
+    val disbanded: Boolean = false,
 )
 
 class GroupChatViewModel(app: Application, private val connectionId: String, private val roomId: String) :
@@ -53,8 +58,10 @@ class GroupChatViewModel(app: Application, private val connectionId: String, pri
     }
 
     private suspend fun loadRoom() {
-        val (room, log) = graph.groups.roomState(connectionId, roomId)
-        _ui.update { it.copy(loading = false, room = room, log = log, error = null) }
+        val state = graph.groups.roomState(connectionId, roomId)
+        _ui.update {
+            it.copy(loading = false, room = state.room, log = state.log, pending = state.pending, error = null)
+        }
     }
 
     fun send(text: String) {
@@ -79,6 +86,47 @@ class GroupChatViewModel(app: Application, private val connectionId: String, pri
                 _ui.update { it.copy(message = "Stopped ($n queued item(s) cancelled)") }
             } catch (e: Exception) {
                 _ui.update { it.copy(error = e.message ?: "stop failed") }
+            }
+        }
+    }
+
+    fun disband() {
+        if (_ui.value.busy) return
+        viewModelScope.launch {
+            try {
+                graph.groups.disband(connectionId, roomId)
+                _ui.update { it.copy(disbanded = true) }
+            } catch (e: Exception) {
+                _ui.update { it.copy(error = e.message ?: "disband failed") }
+            }
+        }
+    }
+
+    /** Resolve a member's approval request — choice "once" or "deny" (PROTOCOL.md §5.6). */
+    fun resolve(action: GroupPendingAction, choice: String) {
+        if (_ui.value.busy) return
+        viewModelScope.launch {
+            _ui.update { it.copy(busy = true) }
+            try {
+                graph.groups.resolvePending(connectionId, roomId, action, choice)
+                _ui.update {
+                    it.copy(busy = false, message = if (choice == "deny") "Denied" else "Approved")
+                }
+            } catch (e: Exception) {
+                _ui.update { it.copy(busy = false, error = e.message ?: "approve failed") }
+            }
+        }
+    }
+
+    fun retry(action: GroupPendingAction) {
+        if (_ui.value.busy) return
+        viewModelScope.launch {
+            _ui.update { it.copy(busy = true) }
+            try {
+                graph.groups.retryPending(connectionId, roomId, action)
+                _ui.update { it.copy(busy = false, message = "Retrying that round…") }
+            } catch (e: Exception) {
+                _ui.update { it.copy(busy = false, error = e.message ?: "retry failed") }
             }
         }
     }

@@ -57,6 +57,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -103,6 +104,7 @@ fun ChatScreen(
         },
     )
     val ui by vm.ui.collectAsState()
+    val canSend by vm.canSend.collectAsState()
     val avatars by vm.avatars.collectAsState()
     val itemTimes by vm.itemTimes.collectAsState()
     val presence by vm.presence.collectAsState()
@@ -300,27 +302,50 @@ fun ChatScreen(
                     ApprovalCardView(pinnedCard, ui.approvalResolved, ui.approvalExpired, onRespond = vm::respond)
                 }
             }
-            ChatComposer(
-                value = draft,
-                onValueChange = { draft = it },
-                placeholder = if (ui.streaming) "Steer the running turn…" else "Message $botName",
-                streaming = ui.streaming,
-                onSend = {
-                    tick()
-                    vm.send(draft)
-                    draft = ""
-                },
-                onSteer = {
-                    tick()
-                    vm.steer(draft.trim())
-                    draft = ""
-                },
-                onInterrupt = {
-                    tick()
-                    vm.interrupt()
-                },
-                modifier = Modifier.padding(vertical = 6.dp),
-            )
+            if (canSend) {
+                ChatComposer(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    placeholder = if (ui.streaming) "Steer the running turn…" else "Message $botName",
+                    streaming = ui.streaming,
+                    onSend = {
+                        tick()
+                        vm.send(draft)
+                        draft = ""
+                    },
+                    onSteer = {
+                        tick()
+                        vm.steer(draft.trim())
+                        draft = ""
+                    },
+                    onInterrupt = {
+                        tick()
+                        vm.interrupt()
+                    },
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            } else if (!ui.loading) {
+                // SV-01: the session never opened — typing here would go nowhere, so the
+                // composer is replaced by a quiet hint and a way back in.
+                Column(
+                    Modifier.padding(vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Surface(
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier.fillMaxWidth().alpha(0.6f),
+                    ) {
+                        Text(
+                            "Waiting for the gateway…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                        )
+                    }
+                    TextButton(onClick = { vm.retry() }) { Text("Try again") }
+                }
+            }
         }
     }
 }

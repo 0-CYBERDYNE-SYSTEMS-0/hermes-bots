@@ -16,6 +16,7 @@ import ai.hermes.bots.ui.routines.RoutinesScreen
 import ai.hermes.bots.ui.settings.FleetProvisionDialog
 import ai.hermes.bots.ui.settings.NotificationsScreen
 import ai.hermes.bots.ui.settings.SettingsScreen
+import android.net.Uri
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -37,8 +38,11 @@ import kotlinx.coroutines.launch
 /** One-shot provisioning deep link delivered from MainActivity (B1a). */
 data class DeepLinkLaunch(val uri: String, val seq: Long)
 
+/** One-shot notification-tap chat target delivered from MainActivity (SV-15). */
+data class PendingChatLaunch(val connectionId: String, val botName: String, val seq: Long)
+
 @Composable
-fun AppRoot(deepLink: DeepLinkLaunch? = null) {
+fun AppRoot(deepLink: DeepLinkLaunch? = null, pendingChat: PendingChatLaunch? = null) {
     val nav = rememberNavController()
     val app = LocalContext.current.applicationContext as HermesBotsApp
     val scope = rememberCoroutineScope()
@@ -48,6 +52,14 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null) {
     LaunchedEffect(deepLink) {
         val link = deepLink ?: return@LaunchedEffect
         provisionDraft = app.graph.provisioning.fromDeepLink(link.uri)
+    }
+    // Notification tap → land directly in that bot's chat (SV-15); seq makes a repeated
+    // identical pair still fire, launchSingleTop keeps a re-tap from stacking screens.
+    LaunchedEffect(pendingChat) {
+        val target = pendingChat ?: return@LaunchedEffect
+        nav.navigate("chat/${Uri.encode(target.connectionId)}/${Uri.encode(target.botName)}") {
+            launchSingleTop = true
+        }
     }
     provisionDraft?.let { draft ->
         FleetProvisionDialog(
@@ -87,19 +99,24 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null) {
     ) {
         composable("roster") {
             RosterScreen(
-                onOpenChat = { connectionId, botName -> nav.navigate("chat/$connectionId/$botName") },
+                onOpenChat = { connectionId, botName -> nav.navigate("chat/$connectionId/${Uri.encode(botName)}") },
                 onOpenGateways = { nav.navigate("connections") },
                 onOpenNotifications = { nav.navigate("notifications") },
                 onOpenSettings = { nav.navigate("settings") },
                 onNewBot = { nav.navigate("editor") },
-                onEditBot = { connectionId, botName -> nav.navigate("editor/$connectionId/$botName") },
-                onOpenRoutines = { connectionId, botName -> nav.navigate("routines/$connectionId/$botName") },
+                onEditBot = { connectionId, botName -> nav.navigate("editor/$connectionId/${Uri.encode(botName)}") },
+                onOpenRoutines = { connectionId, botName -> nav.navigate("routines/$connectionId/${Uri.encode(botName)}") },
                 onOpenGroups = { nav.navigate("groups") },
                 onOpenAnyChat = { nav.navigate("anychat") },
             )
         }
         composable("notifications") {
-            NotificationsScreen(onBack = { nav.popBackStack() })
+            NotificationsScreen(
+                onBack = { nav.popBackStack() },
+                onOpenChat = { connectionId, botName ->
+                    nav.navigate("chat/${Uri.encode(connectionId)}/${Uri.encode(botName)}")
+                },
+            )
         }
         composable("settings") {
             SettingsScreen(
@@ -163,8 +180,8 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null) {
                 connectionId = connectionId,
                 botName = botName,
                 onBack = { nav.popBackStack() },
-                onOpenRoutines = { nav.navigate("routines/$connectionId/$botName") },
-                onEditBot = { nav.navigate("editor/$connectionId/$botName") },
+                onOpenRoutines = { nav.navigate("routines/$connectionId/${Uri.encode(botName)}") },
+                onEditBot = { nav.navigate("editor/$connectionId/${Uri.encode(botName)}") },
             )
         }
     }

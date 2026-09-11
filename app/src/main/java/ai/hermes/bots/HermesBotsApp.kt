@@ -59,9 +59,22 @@ class AppGraph(private val app: HermesBotsApp) {
                                         val label = bot?.bot?.displayName ?: bot?.bot?.name ?: "Hermes Bots"
                                         // In-app history records every qualifying event, even when
                                         // the system notification is suppressed or app is foregrounded.
-                                        settings.appendNotification(label, text, ev.sessionId ?: "global")
+                                        // Ids let the Notifications list deep-link back to the chat (SV-15).
+                                        settings.appendNotification(
+                                            botLabel = label,
+                                            preview = text,
+                                            sessionId = ev.sessionId ?: "global",
+                                            connectionId = bot?.bot?.connectionId,
+                                            botName = bot?.bot?.name,
+                                        )
                                         if (app.activitiesInForeground == 0 && settings.notificationsEnabled.value) {
-                                            notifier.notifyBotMessage(label, text, ev.sessionId ?: "global")
+                                            notifier.notifyBotMessage(
+                                                label,
+                                                text,
+                                                ev.sessionId ?: "global",
+                                                bot?.bot?.connectionId,
+                                                bot?.bot?.name,
+                                            )
                                         }
                                     }
                                 }

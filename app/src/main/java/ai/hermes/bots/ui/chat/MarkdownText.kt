@@ -20,9 +20,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 
 /**
- * Lite markdown: fenced code blocks, inline `code`, **bold**, *italic*,
- * http(s) links, "- " bullets, and #-headings as bold. Enough for chat output;
- * no external dependency.
+ * Lite markdown: fenced code blocks, inline `code`, **bold**,
+ * "- " bullets, and #-headings as bold. Enough for chat output;
+ * no external dependency. (Links are a known deferral.)
  */
 @Composable
 fun MarkdownText(text: String, modifier: Modifier = Modifier) {
@@ -105,7 +105,11 @@ private fun annotate(text: String): AnnotatedString = buildAnnotatedString {
         for (h in 1..4) {
             if (work.startsWith("#".repeat(h) + " ")) { work = work.substring(h + 1); heading = true }
         }
-        if (bullet) work = work.trimStart().substring(2)
+        if (bullet) {
+            // Emit a glyph for the stripped marker (SV-19); keep any indent the line carried.
+            val indent = work.takeWhile { it == ' ' || it == '\t' }
+            work = "$indent•  ${work.trimStart().substring(2)}"
+        }
         if (heading) {
             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(work) }
             return@forEachIndexed

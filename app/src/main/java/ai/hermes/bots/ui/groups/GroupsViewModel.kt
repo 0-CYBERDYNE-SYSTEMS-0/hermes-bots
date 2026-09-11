@@ -27,6 +27,8 @@ data class GroupsUiState(
     val busy: Boolean = false,
     val message: String? = null,
     val error: String? = null,
+    /** Set when the initial capabilities probe failed — the screen shows a retryable error state. */
+    val probeError: String? = null,
 )
 
 class GroupsViewModel(app: Application) : AndroidViewModel(app) {
@@ -41,7 +43,13 @@ class GroupsViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptySet())
 
     init {
+        load()
+    }
+
+    /** Probe capabilities + load rooms/roster for the primary connection (initial load and Retry). */
+    private fun load() {
         viewModelScope.launch {
+            _ui.update { it.copy(loading = true, probeError = null) }
             try {
                 val conns = graph.connections.connections.first()
                 val conn = conns.firstOrNull { it.primary } ?: conns.firstOrNull()
@@ -59,22 +67,13 @@ class GroupsViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             } catch (e: Exception) {
-                _ui.update { it.copy(loading = false, error = e.message ?: "load failed") }
+                _ui.update { it.copy(loading = false, probeError = e.message ?: "load failed") }
             }
         }
     }
 
     fun refresh() {
-        val connId = _ui.value.connectionId
-        if (connId.isEmpty()) return
-        viewModelScope.launch {
-            try {
-                graph.groups.refreshRooms(connId)
-                _ui.update { it.copy(rooms = graph.groups.rooms.value[connId].orEmpty(), error = null) }
-            } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "refresh failed") }
-            }
-        }
+        load()
     }
 
     fun create(name: String, members: List<RosterEntry>) {

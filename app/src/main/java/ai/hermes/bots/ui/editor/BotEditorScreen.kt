@@ -55,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,6 +66,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.launch
 
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -87,15 +89,29 @@ fun BotEditorScreen(
     val ui by vm.ui.collectAsState()
     val connections by vm.connections.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var modelMenu by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) vm.setPickedAvatar(loadAvatarFromUri(context, uri))
+        if (uri != null) {
+            val image = loadAvatarFromUri(context, uri)
+            if (image != null) {
+                vm.setPickedAvatar(image)
+            } else {
+                scope.launch { snackbar.showSnackbar("Couldn't use that photo — try a different one.") }
+            }
+        }
     }
 
     LaunchedEffect(ui.saved) { if (ui.saved) onBack() }
     LaunchedEffect(ui.message) { ui.message?.let { snackbar.showSnackbar(it) } }
-    LaunchedEffect(ui.error) { ui.error?.let { snackbar.showSnackbar(it) } }
+    LaunchedEffect(ui.error) {
+        ui.error?.let { raw ->
+            val text = ai.hermes.bots.ui.util.Humanize.friendlyError(raw, ui.name.ifBlank { "this bot" })
+                ?: "Something went wrong. Check the gateway and try again."
+            snackbar.showSnackbar(text)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -186,7 +202,7 @@ fun BotEditorScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                     ) {
-                        connections.take(3).forEach { c ->
+                        connections.forEach { c ->
                             FilterChip(
                                 selected = c.id == ui.createOnConnectionId,
                                 onClick = { vm.set { it.copy(createOnConnectionId = c.id) } },
@@ -338,6 +354,46 @@ fun BotEditorScreen(
                             selected = skill.enabled,
                             onClick = { vm.toggleSkill(skill.name, !skill.enabled) },
                             label = { Text(skill.name) },
+                        )
+                    }
+                }
+            }
+            if (ui.toolsets.isNotEmpty()) {
+                val onCount = ui.toolsets.count { it.enabled }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Toolsets", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "$onCount of ${ui.toolsets.size} on",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ui.toolsets.forEach { toolset ->
+                        FilterChip(
+                            selected = toolset.enabled,
+                            onClick = { vm.toggleToolset(toolset.name, !toolset.enabled) },
+                            label = { Text(toolset.name) },
+                        )
+                    }
+                }
+            }
+            if (ui.mcpServers.isNotEmpty()) {
+                val onCount = ui.mcpServers.count { it.enabled }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("MCP servers", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "$onCount of ${ui.mcpServers.size} on",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ui.mcpServers.forEach { server ->
+                        FilterChip(
+                            selected = server.enabled,
+                            onClick = { vm.toggleMcpServer(server.name, !server.enabled) },
+                            label = { Text(server.name) },
                         )
                     }
                 }

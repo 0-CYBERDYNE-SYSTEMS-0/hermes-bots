@@ -13,8 +13,10 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import ai.hermes.bots.notify.BotNotifier
 import ai.hermes.bots.ui.AppRoot
 import ai.hermes.bots.ui.DeepLinkLaunch
+import ai.hermes.bots.ui.PendingChatLaunch
 import ai.hermes.bots.ui.theme.HermesBotsTheme
 
 class MainActivity : ComponentActivity() {
@@ -24,10 +26,20 @@ class MainActivity : ComponentActivity() {
     private val deepLink = mutableStateOf<DeepLinkLaunch?>(null)
     private var linkSeq = 0L
 
+    /** Bot-notification tap → one-shot chat navigation, same consume-once shape as deepLink (SV-15). */
+    private val pendingChat = mutableStateOf<PendingChatLaunch?>(null)
+    private var chatSeq = 0L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
-        captureDeepLink(intent)
+        // Only on a fresh launch: recapturing after recreation would re-open the dialog
+        // (or re-fire the chat jump) the user may have already dismissed. Rotating while
+        // the provisioning dialog is open dismisses it — accepted.
+        if (savedInstanceState == null) {
+            captureDeepLink(intent)
+            capturePendingChat(intent)
+        }
         enableEdgeToEdge()
         setContent {
             val themeMode by (application as HermesBotsApp).graph.settings.themeMode.collectAsState()
@@ -38,7 +50,7 @@ class MainActivity : ComponentActivity() {
                     else -> isSystemInDarkTheme()
                 },
             ) {
-                AppRoot(deepLink = deepLink.value)
+                AppRoot(deepLink = deepLink.value, pendingChat = pendingChat.value)
             }
         }
     }
@@ -46,6 +58,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         captureDeepLink(intent)
+        capturePendingChat(intent)
     }
 
     private fun captureDeepLink(intent: Intent?) {
@@ -53,6 +66,13 @@ class MainActivity : ComponentActivity() {
         if (data.scheme != "hermesbots") return
         linkSeq += 1
         deepLink.value = DeepLinkLaunch(uri = data.toString(), seq = linkSeq)
+    }
+
+    private fun capturePendingChat(intent: Intent?) {
+        val connectionId = intent?.getStringExtra(BotNotifier.EXTRA_CONNECTION_ID) ?: return
+        val botName = intent.getStringExtra(BotNotifier.EXTRA_BOT_NAME) ?: return
+        chatSeq += 1
+        pendingChat.value = PendingChatLaunch(connectionId, botName, chatSeq)
     }
 
     private fun requestNotificationPermissionIfNeeded() {

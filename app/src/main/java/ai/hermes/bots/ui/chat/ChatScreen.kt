@@ -10,6 +10,9 @@ import ai.hermes.bots.ui.components.ChatComposer
 import ai.hermes.bots.ui.components.UserBubbleShape
 import ai.hermes.bots.ui.components.WorkingStatus
 import ai.hermes.bots.ui.theme.Dimens
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
@@ -110,6 +113,9 @@ fun ChatScreen(
     val presence by vm.presence.collectAsState()
     val gatewayLabel by vm.gatewayLabel.collectAsState()
     var draft by remember { mutableStateOf("") }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.attachImageFromUri(uri)
+    }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val listState = rememberLazyListState()
     val rows = remember(ui.items, itemTimes) { Transcript.build(ui.items, itemTimes) }
@@ -308,6 +314,11 @@ fun ChatScreen(
                     onValueChange = { draft = it },
                     placeholder = if (ui.streaming) "Steer the running turn…" else "Message $botName",
                     streaming = ui.streaming,
+                    pendingImage = ui.pendingImage?.filename,
+                    onAttachImage = {
+                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onRemoveImage = { vm.clearPendingImage() },
                     onSend = {
                         tick()
                         vm.send(draft)

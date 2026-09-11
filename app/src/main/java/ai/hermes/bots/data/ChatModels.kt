@@ -23,6 +23,12 @@ data class ApprovalCard(
     val choices: List<String>,
 )
 
+/** An image queued to ride with the user's next message (image.attach_bytes). */
+data class PendingImage(
+    val filename: String,
+    val base64: String,
+)
+
 data class ChatUiState(
     val loading: Boolean = true,
     val error: String? = null,
@@ -34,6 +40,7 @@ data class ChatUiState(
     val approvalResolved: String? = null,
     val approvalExpired: Boolean = false,
     val botModel: String? = null,
+    val pendingImage: PendingImage? = null,
 )
 
 /**

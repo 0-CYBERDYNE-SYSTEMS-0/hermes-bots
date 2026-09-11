@@ -129,6 +129,9 @@ fun ChatScreen(
         }
     }
     var userScrolledUp by remember { mutableStateOf(false) }
+    // First populated transcript (open/reload) lands on the LATEST row — a long restored
+    // history must never open showing its top. After that, autoscroll stays reader-gated.
+    var jumpedToLatest by remember { mutableStateOf(false) }
     LaunchedEffect(listState) {
         listState.interactionSource.interactions.collect { interaction ->
             if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
@@ -138,7 +141,14 @@ fun ChatScreen(
     }
     LaunchedEffect(atBottom) { if (atBottom) userScrolledUp = false }
     LaunchedEffect(rows.size, ui.statusText) {
-        if (rows.isNotEmpty() && atBottom) listState.animateScrollToItem(rows.lastIndex)
+        if (rows.isEmpty()) return@LaunchedEffect
+        if (!jumpedToLatest) {
+            jumpedToLatest = true
+            userScrolledUp = false
+            listState.scrollToItem(rows.lastIndex)
+        } else if (atBottom) {
+            listState.animateScrollToItem(rows.lastIndex)
+        }
     }
     val showJump = userScrolledUp && !atBottom && rows.isNotEmpty()
 
@@ -321,11 +331,13 @@ fun ChatScreen(
                     onRemoveImage = { vm.clearPendingImage() },
                     onSend = {
                         tick()
+                        userScrolledUp = false // the sender wants eyes on the new round
                         vm.send(draft)
                         draft = ""
                     },
                     onSteer = {
                         tick()
+                        userScrolledUp = false
                         vm.steer(draft.trim())
                         draft = ""
                     },

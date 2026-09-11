@@ -6,14 +6,22 @@ import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ChatMessagesParser
 import ai.hermes.bots.data.ChatUiState
 import ai.hermes.bots.data.ItemKind
+import ai.hermes.bots.data.PendingImage
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.protocol.GatewayEvent
 import ai.hermes.bots.protocol.HermesGateway
 import ai.hermes.bots.protocol.RpcException
 import ai.hermes.bots.protocol.SocketState
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,12 +32,17 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
+
+/** Attachments are downscaled to this max dimension before JPEG q80 + base64 (server cap is 25 MB). */
+private const val ATTACH_MAX_DIMEN = 1280
 
 
 class ChatViewModel(
@@ -133,7 +146,12 @@ class ChatViewModel(
             var adopted = false
             if (canonicalId != null) {
                 try {
-                    adopt(gw.request(Catalog.METHOD_SESSION_RESUME, buildJsonObject { put("session_id", canonicalId) }, 120_000))
+                    // Server ≥0.21.1 resolves profile-scoped sessions only when the profile is named.
+                    adopt(gw.request(
+                        Catalog.METHOD_SESSION_RESUME,
+                        buildJsonObject { put("session_id", canonicalId); put("profile", botName) },
+                        120_000,
+                    ))
                     adopted = true
                 } catch (_: Exception) {
                     // canonical session gone — fall through to create
@@ -224,7 +242,11 @@ class ChatViewModel(
         val gw = gateway ?: return
         val sid = runtimeSessionId ?: return
         try {
-            adopt(gw.request(Catalog.METHOD_SESSION_RESUME, buildJsonObject { put("session_id", sid) }, 120_000))
+            adopt(gw.request(
+                Catalog.METHOD_SESSION_RESUME,
+                buildJsonObject { put("session_id", sid); put("profile", botName) },
+                120_000,
+            ))
         } catch (e: Exception) {
             _ui.update { it.copy(error = "reload failed: ${e.message}") }
         }
@@ -321,7 +343,8 @@ class ChatViewModel(
     fun send(rawText: String) {
         val sid = runtimeSessionId ?: return
         val text = rawText.trim()
-        if (text.isEmpty()) return
+        val pending = _ui.value.pendingImage
+        if (text.isEmpty() && pending == null) return
         if (CanonicalChat.isOpenCommand(text)) {
             viewModelScope.launch {
                 try {
@@ -334,12 +357,30 @@ class ChatViewModel(
             return
         }
         viewModelScope.launch {
+            val bubble = when {
+                pending != null && text.isNotEmpty() -> "$text\n🖼 ${pending.filename}"
+                pending != null -> "🖼 ${pending.filename}"
+                else -> text
+            }
             _ui.update { st ->
-                st.copy(items = finalizeStreaming(st.items) + ChatItem("u-${++itemCounter}", ItemKind.USER, text))
+                st.copy(items = finalizeStreaming(st.items) + ChatItem("u-${++itemCounter}", ItemKind.USER, bubble))
             }
             try {
-                gateway?.request(Catalog.METHOD_PROMPT_SUBMIT, CanonicalChat.submitParams(sid, text), 30_000)
-                _ui.update { it.copy(streaming = true, error = null) }
+                if (pending != null) {
+                    gateway?.request(
+                        Catalog.METHOD_IMAGE_ATTACH_BYTES,
+                        buildJsonObject {
+                            put("session_id", sid)
+                            put("content_base64", pending.base64)
+                            put("filename", pending.filename)
+                        },
+                        60_000,
+                    )
+                }
+                // Image-only sends ride the server's own attachment turn-text convention.
+                val submitText = text.ifBlank { "[User attached image: ${pending?.filename}]" }
+                gateway?.request(Catalog.METHOD_PROMPT_SUBMIT, CanonicalChat.submitParams(sid, submitText), 30_000)
+                _ui.update { it.copy(streaming = true, error = null, pendingImage = null) }
             } catch (e: RpcException) {
                 _ui.update { st ->
                     st.copy(
@@ -406,6 +447,24 @@ class ChatViewModel(
         }
     }
 
+    /** Queue an image (image.attach_bytes) to ride with the next send. */
+    fun attachImageFromUri(uri: Uri) {
+        viewModelScope.launch {
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching { loadPendingImage(getApplication(), uri) }.getOrNull()
+            }
+            if (loaded != null) {
+                _ui.update { it.copy(pendingImage = loaded, error = null) }
+            } else {
+                _ui.update { it.copy(error = "Couldn't use that image — try a different one.") }
+            }
+        }
+    }
+
+    fun clearPendingImage() {
+        _ui.update { it.copy(pendingImage = null) }
+    }
+
     private fun finalizeStreaming(items: List<ChatItem>): List<ChatItem> =
         items.map { if (it.streaming) it.copy(streaming = false) else it }
 
@@ -429,6 +488,36 @@ class ChatViewModel(
 
     private fun boolField(obj: JsonObject, key: String): Boolean? =
         (obj[key] as? JsonPrimitive)?.content?.toBooleanStrictOrNull()
+
+    private fun loadPendingImage(context: android.content.Context, uri: Uri): PendingImage? {
+        val raw = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        val decoded = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return null
+        val scale = minOf(1f, ATTACH_MAX_DIMEN.toFloat() / maxOf(decoded.width, decoded.height))
+        val scaled = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                decoded,
+                (decoded.width * scale).toInt().coerceAtLeast(1),
+                (decoded.height * scale).toInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            decoded
+        }
+        val jpeg = ByteArrayOutputStream().use { out ->
+            scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            out.toByteArray()
+        }
+        return PendingImage(
+            filename = queryDisplayName(context, uri) ?: "photo.jpg",
+            base64 = Base64.encodeToString(jpeg, Base64.NO_WRAP),
+        )
+    }
+
+    private fun queryDisplayName(context: android.content.Context, uri: Uri): String? =
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+        }
 
     override fun onCleared() {
         eventJob?.cancel()

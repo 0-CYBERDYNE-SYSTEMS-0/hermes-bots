@@ -191,7 +191,12 @@ class AnyChatRepository(
             var adopted = false
             if (canonicalId != null) {
                 try {
-                    adopt(rt, live.gateway.request(Catalog.METHOD_SESSION_RESUME, buildJsonObject { put("session_id", canonicalId) }, 120_000))
+                    // Server ≥0.21.1 resolves profile-scoped sessions only when the profile is named.
+                    adopt(rt, live.gateway.request(
+                        Catalog.METHOD_SESSION_RESUME,
+                        buildJsonObject { put("session_id", canonicalId); put("profile", rt.member.botName) },
+                        120_000,
+                    ))
                     adopted = true
                 } catch (_: Exception) {
                     // canonical session gone — fall through to create
@@ -278,7 +283,11 @@ class AnyChatRepository(
         val gw = gateways.live.value[rt.member.connectionId]?.gateway ?: return
         val sid = rt.sessionId ?: return
         try {
-            adopt(rt, gw.request(Catalog.METHOD_SESSION_RESUME, buildJsonObject { put("session_id", sid) }, 120_000))
+            adopt(rt, gw.request(
+                Catalog.METHOD_SESSION_RESUME,
+                buildJsonObject { put("session_id", sid); put("profile", rt.member.botName) },
+                120_000,
+            ))
         } catch (_: Exception) {
         }
     }
@@ -402,7 +411,7 @@ class AnyChatRepository(
             val gw = gateways.live.value[rt.member.connectionId]?.gateway ?: return null
             val result = gw.request(
                 Catalog.METHOD_SESSION_RESUME,
-                buildJsonObject { put("session_id", sessionId) },
+                buildJsonObject { put("session_id", sessionId); put("profile", rt.member.botName) },
                 120_000,
             )
             (result["session_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: sessionId

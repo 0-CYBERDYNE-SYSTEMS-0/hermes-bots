@@ -106,7 +106,6 @@ fun RosterScreen(
     var menu by remember { mutableStateOf(false) }
     var sheetFor by remember { mutableStateOf<MergedBot?>(null) }
     var sectionFor by remember { mutableStateOf<MergedBot?>(null) }
-    var pickFor by remember { mutableStateOf<MergedBot?>(null) }
     val searchFocus = remember { FocusRequester() }
 
     // SV-11: hide / move-to-section failures surface here instead of vanishing.
@@ -128,16 +127,15 @@ fun RosterScreen(
                 (m.primary.bot.description ?: "").lowercase(Locale.ROOT).contains(query) ||
                 (m.preview ?: "").lowercase(Locale.ROOT).contains(query)
         }
-    // Same-named instances were merged away; the chip now communicates HOW MANY gateways
-    // host this bot, and the sheet's "Open on…" picks a specific one.
-    fun chipLabel(m: MergedBot): String? = when {
-        m.instances.size <= 1 -> null
-        else -> {
-            val label = connections.firstOrNull { it.id == m.primary.bot.connectionId }?.label
-            val extra = "+${m.instances.size - 1}"
-            if (label != null) "$label · $extra" else extra
-        }
-    }
+    // Rows are per-gateway: a chip appears only when the same bot name lives on several
+    // gateways, labeling which one this row is.
+    val collidedNames = fleet.rows
+        .groupBy { it.name.lowercase(Locale.ROOT) }
+        .filterValues { it.size > 1 }
+        .keys
+    fun chipLabel(m: MergedBot): String? =
+        if (m.name.lowercase(Locale.ROOT) !in collidedNames) null
+        else connections.firstOrNull { it.id == m.primary.bot.connectionId }?.label
     val listed = visible.filterNot { it == fleet.pinnedAssistant }
     val sections = listed.groupBy { it.sectionId }.toSortedMap(compareBy { it ?: "" })
 
@@ -257,7 +255,7 @@ fun RosterScreen(
                                     modifier = Modifier
                                         .clip(MaterialTheme.shapes.medium)
                                         .clickable {
-                                            vm.markReadAll(m.name)
+                                            vm.markRead(m.primary.bot.connectionId, m.name)
                                             onOpenChat(m.primary.bot.connectionId, m.name)
                                         }
                                         .padding(4.dp),
@@ -349,7 +347,7 @@ fun RosterScreen(
                                 avatar = avatars[avatarKey(pinned.primary.bot)],
                                 chip = chipLabel(pinned),
                                 onClick = {
-                                    vm.markReadAll(pinned.name)
+                                    vm.markRead(pinned.primary.bot.connectionId, pinned.name)
                                     onOpenChat(pinned.primary.bot.connectionId, pinned.name)
                                 },
                                 onLongClick = { sheetFor = pinned },
@@ -369,7 +367,7 @@ fun RosterScreen(
                                 avatar = avatars[avatarKey(m.primary.bot)],
                                 chip = chipLabel(m),
                                 onClick = {
-                                    vm.markReadAll(m.name)
+                                    vm.markRead(m.primary.bot.connectionId, m.name)
                                     onOpenChat(m.primary.bot.connectionId, m.name)
                                 },
                                 onLongClick = { sheetFor = m },
@@ -403,7 +401,7 @@ fun RosterScreen(
                         Text(
                             buildString {
                                 append(m.sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots")
-                                if (m.instances.size > 1) append(" · ${m.instances.size} gateways")
+                                chipLabel(m)?.let { append(" · $it") }
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -426,17 +424,12 @@ fun RosterScreen(
                         onEditBot(m.primary.bot.connectionId, m.name)
                     },
                 )
-                if (m.instances.size > 1) {
-                    ListItem(
-                        headlineContent = { Text("Open on…") },
-                        leadingContent = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        modifier = Modifier.clickable { pickFor = m; sheetFor = null },
-                    )
-                }
                 ListItem(
                     headlineContent = { Text(if (m.hidden) "Unhide" else "Hide") },
                     leadingContent = { Icon(Icons.Filled.Clear, contentDescription = null) },
-                    modifier = Modifier.clickable { vm.setHiddenAll(m.name, !m.hidden); sheetFor = null },
+                    modifier = Modifier.clickable {
+                        vm.setHidden(m.primary.bot.connectionId, m.name, !m.hidden); sheetFor = null
+                    },
                 )
                 ListItem(
                     headlineContent = { Text("Move to section…") },
@@ -445,46 +438,6 @@ fun RosterScreen(
                 )
             }
         }
-    }
-
-    pickFor?.let { m ->
-        AlertDialog(
-            onDismissRequest = { pickFor = null },
-            title = { Text("Open ${m.displayName ?: m.name} on…") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    m.instances.forEach { inst ->
-                        val label = connections.firstOrNull { it.id == inst.bot.connectionId }?.label
-                            ?: inst.bot.connectionId
-                        Surface(
-                            shape = MaterialTheme.shapes.medium,
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    pickFor = null
-                                    vm.markRead(inst.bot.connectionId, inst.bot.name)
-                                    onOpenChat(inst.bot.connectionId, inst.bot.name)
-                                },
-                        ) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(label, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    inst.bot.lastPreview ?: "Tap to start the conversation",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { pickFor = null }) { Text("Cancel") }
-            },
-        )
     }
 
     sectionFor?.let { m ->
@@ -496,7 +449,10 @@ fun RosterScreen(
                 OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Section name (leave blank for Bots)") }, singleLine = true)
             },
             confirmButton = {
-                TextButton(onClick = { vm.setSectionAll(m.name, text.trim()); sectionFor = null }) { Text("Move") }
+                TextButton(onClick = {
+                    vm.setSection(m.primary.bot.connectionId, m.name, text.trim())
+                    sectionFor = null
+                }) { Text("Move") }
             },
             dismissButton = { TextButton(onClick = { sectionFor = null }) { Text("Cancel") } },
         )

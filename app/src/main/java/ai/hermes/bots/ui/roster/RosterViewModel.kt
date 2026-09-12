@@ -5,6 +5,7 @@ import ai.hermes.bots.data.AvatarImage
 import ai.hermes.bots.data.MergedBot
 import ai.hermes.bots.data.ConnectionRecord
 import ai.hermes.bots.data.RosterRepository
+import ai.hermes.bots.data.rowsPerGateway
 import ai.hermes.bots.protocol.SocketState
 import ai.hermes.bots.ui.util.Humanize
 import android.app.Application
@@ -20,20 +21,20 @@ import kotlinx.coroutines.launch
 /** The user's main assistant bot on the primary gateway (profile name, not a display name). */
 const val DEFAULT_ASSISTANT_NAME = "default"
 
-/** The roster as rendered: one row per bot + the pinned assistant row (if any). */
+/** The roster as rendered: one row per bot per gateway + the pinned assistant row (if any). */
 data class MergedRoster(val rows: List<MergedBot>, val pinnedAssistant: MergedBot?)
 
 class RosterViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = (app as HermesBotsApp).graph
 
-    /** Same-named bots across gateways merge into ONE row (user-facing dedup). */
+    /** Every bot on every connected gateway gets its own row — no same-name collapsing. */
     val merged: StateFlow<MergedRoster> = combine(
         graph.roster.roster,
         graph.gateways.socketStates,
         graph.connections.connections,
     ) { rows, states, conns ->
         val primaryId = conns.firstOrNull { it.primary }?.id
-        val list = MergedBot.mergeByName(rows, { states[it] is SocketState.Ready }, primaryId)
+        val list = rowsPerGateway(rows, conns.associate { it.id to it.label })
         val pinned = list.firstOrNull {
             it.name.equals(DEFAULT_ASSISTANT_NAME, ignoreCase = true) && it.primary.bot.connectionId == primaryId
         }
@@ -76,13 +77,6 @@ class RosterViewModel(app: Application) : AndroidViewModel(app) {
         graph.roster.markRead(connectionId, botName)
     }
 
-    /** Opening a merged row reads the bot everywhere it lives. */
-    fun markReadAll(botName: String) {
-        graph.roster.roster.value
-            .filter { it.bot.name.equals(botName, ignoreCase = true) }
-            .forEach { graph.roster.markRead(it.bot.connectionId, it.bot.name) }
-    }
-
     private val admin by lazy { ai.hermes.bots.data.BotAdminRepository(graph.gateways) }
 
     fun setHidden(connectionId: String, botName: String, hidden: Boolean) {
@@ -103,30 +97,6 @@ class RosterViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Hide applies to the bot everywhere it lives — one merged row, one hide. */
-    fun setHiddenAll(botName: String, hidden: Boolean) {
-        viewModelScope.launch {
-            var firstError: String? = null
-            graph.roster.roster.value
-                .filter { it.bot.name.equals(botName, ignoreCase = true) }
-                .forEach { row ->
-                    try {
-                        admin.configure(
-                            connectionId = row.bot.connectionId,
-                            name = row.bot.name,
-                            uiMeta = ai.hermes.bots.data.BotAdmin.mergeUiMeta(null, ai.hermes.bots.data.BotAdmin.UiMetaPatch(hidden = hidden)),
-                            expectedRevisions = row.bot.uiMetaRevisions,
-                        )
-                    } catch (e: Exception) {
-                        // CAS conflicts resolve on the next poll; keep applying to the rest.
-                        firstError = firstError ?: (Humanize.friendlyError(e.message, botName)
-                            ?: "Couldn't reach the gateway — try again.")
-                    }
-                }
-            _transientError.value = firstError
-        }
-    }
-
     fun setSection(connectionId: String, botName: String, sectionId: String) {
         viewModelScope.launch {
             try {
@@ -141,29 +111,6 @@ class RosterViewModel(app: Application) : AndroidViewModel(app) {
                 _transientError.value = Humanize.friendlyError(e.message, botName)
                     ?: "Couldn't reach the gateway — try again."
             }
-        }
-    }
-
-    /** Moving the bot's section applies on every gateway that hosts it. */
-    fun setSectionAll(botName: String, sectionId: String) {
-        viewModelScope.launch {
-            var firstError: String? = null
-            graph.roster.roster.value
-                .filter { it.bot.name.equals(botName, ignoreCase = true) }
-                .forEach { row ->
-                    try {
-                        admin.configure(
-                            connectionId = row.bot.connectionId,
-                            name = row.bot.name,
-                            uiMeta = ai.hermes.bots.data.BotAdmin.mergeUiMeta(null, ai.hermes.bots.data.BotAdmin.UiMetaPatch(sectionId = sectionId.ifBlank { null })),
-                            expectedRevisions = row.bot.uiMetaRevisions,
-                        )
-                    } catch (e: Exception) {
-                        firstError = firstError ?: (Humanize.friendlyError(e.message, botName)
-                            ?: "Couldn't reach the gateway — try again.")
-                    }
-                }
-            _transientError.value = firstError
         }
     }
 }

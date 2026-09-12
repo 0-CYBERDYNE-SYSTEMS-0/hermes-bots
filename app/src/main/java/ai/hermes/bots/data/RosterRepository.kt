@@ -48,9 +48,10 @@ data class RosterEntry(
 )
 
 /**
- * One roster row per bot NAME: the same bot installed on several gateways renders once,
- * not once per gateway (fleet rosters mirror each other, so unmerged rows read as
- * duplicates). Tap opens `primary`; the other instances ride along for "Open on…".
+ * One roster row per bot PER GATEWAY: every instance a connected gateway reports stays
+ * visible, so adding a gateway always surfaces its bots. Same-named instances are separate
+ * rows distinguished by the gateway chip; `instances` is retained (size 1) so the sheet's
+ * multi-gateway affordances degrade naturally.
  */
 data class MergedBot(
     val name: String,
@@ -58,53 +59,30 @@ data class MergedBot(
     val instances: List<RosterEntry>,
 ) {
     val displayName: String? get() = primary.bot.displayName
-    val unread: Boolean get() = instances.any { it.unread }
-    val activeNow: Boolean get() = instances.any { it.activeNow }
-    val hidden: Boolean get() = instances.all { it.bot.hidden }
-
-    // A visible row owns its own folder; only a fully hidden row may inherit a
-    // section from its instances (keeps the Hidden drawer's grouping usable).
-    val sectionId: String?
-        get() {
-            primary.bot.sectionId?.let { return it }
-            instances.firstOrNull { !it.bot.hidden && it.bot.sectionId != null }
-                ?.let { return it.bot.sectionId }
-            if (hidden) {
-                instances.firstOrNull { it.bot.sectionId != null }?.let { return it.bot.sectionId }
-            }
-            return null
-        }
-    val lastActiveMs: Long? get() = instances.mapNotNull { it.bot.lastActiveMs }.maxOrNull()
-    val preview: String? get() = instances.maxByOrNull { it.bot.lastActiveMs ?: 0L }?.bot?.lastPreview
-        ?: primary.bot.description
-
-    companion object {
-        /**
-         * Merge same-named instances into one row per bot. The primary instance (what a tap
-         * opens) prefers a Ready connection, then the primary gateway, then a visible row,
-         * then freshest activity. Instances come back freshest-first for the "Open on…" picker.
-         */
-        fun mergeByName(
-            entries: List<RosterEntry>,
-            isReady: (String) -> Boolean = { false },
-            primaryConnectionId: String? = null,
-        ): List<MergedBot> = entries
-            .groupBy { it.bot.name.lowercase(java.util.Locale.ROOT) }
-            .map { (_, same) ->
-                val primary = same.sortedWith(
-                    compareByDescending<RosterEntry> { isReady(it.bot.connectionId) }
-                        .thenByDescending { it.bot.connectionId == primaryConnectionId }
-                        .thenByDescending { !it.bot.hidden }
-                        .thenByDescending { it.bot.lastActiveMs ?: Long.MIN_VALUE },
-                ).first()
-                MergedBot(
-                    name = primary.bot.name,
-                    primary = primary,
-                    instances = same.sortedByDescending { it.bot.lastActiveMs ?: Long.MIN_VALUE },
-                )
-            }
-    }
+    val unread: Boolean get() = primary.unread
+    val activeNow: Boolean get() = primary.activeNow
+    val hidden: Boolean get() = primary.bot.hidden
+    val sectionId: String? get() = primary.bot.sectionId
+    val lastActiveMs: Long? get() = primary.bot.lastActiveMs
+    val preview: String? get() = primary.bot.lastPreview ?: primary.bot.description
 }
+
+/**
+ * The visible roster: one MergedBot per RosterEntry (no same-name collapsing). Rows sort by
+ * bot name so same-named instances render adjacently, then by the gateway's label for a
+ * stable, human-meaningful order.
+ */
+fun rowsPerGateway(
+    entries: List<RosterEntry>,
+    labels: Map<String, String> = emptyMap(),
+): List<MergedBot> = entries
+    .map { e -> MergedBot(e.bot.name, e, listOf(e)) }
+    .sortedWith(
+        compareBy(
+            { it.name.lowercase(java.util.Locale.ROOT) },
+            { labels[it.primary.bot.connectionId] ?: it.primary.bot.connectionId },
+        ),
+    )
 
 data class AvatarImage(val mime: String, val bytes: ByteArray)
 

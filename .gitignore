@@ -10,3 +10,26 @@ captures/
 *.jks
 keystore.properties
 .zcode/
+
+# --- Local/private artifacts — never commit ---
+# Mission/ops docs from the private working repo (if copied in, keep them out of git)
+/AGENTS.md
+/HANDOFF.md
+/DECISIONS.md
+/PLAN.md
+/BOTS-MODE-PARITY.md
+/UI-SPEC.md
+/GBots-ref.md
+/docs/FLEET*.md
+/docs/GATEWAY-CONNECT-SHEET.md
+/docs/DELEGATION-E2E.md
+/docs/UI-AUDIT.md
+/docs/UI-PLAN.md
+/docs/shots/
+/docs/reference/
+/docs/patches/
+# Credentials & generated secrets
+.env
+*.env
+secrets.properties
+hermes-gateway-deeplink.txt

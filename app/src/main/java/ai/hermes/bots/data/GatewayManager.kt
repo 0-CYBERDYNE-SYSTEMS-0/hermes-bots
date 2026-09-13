@@ -9,11 +9,13 @@ import ai.hermes.bots.protocol.HermesGateway
 import ai.hermes.bots.protocol.HermesSocket
 import ai.hermes.bots.protocol.SocketState
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 /** One live connection: its record, socket state, and the typed gateway on top. */
@@ -68,12 +70,18 @@ class GatewayManager(
         }
     }
 
-    suspend fun probe(record: ConnectionRecord): GatewayProbe =
+    // D2: probe/verify run the caller's context (ViewModels/Main) — confine to IO so no
+    // OkHttp object (client, task runner, websocket cancel) is ever touched on Main. The
+    // FleetProbe finally-block's socket.stop() → ws.cancel() → TaskQueue.shutdown() was the
+    // ANR-trace monitor contention against the main thread's IME dispatch.
+    suspend fun probe(record: ConnectionRecord): GatewayProbe = withContext(Dispatchers.IO) {
         Auth.probe(client, record.baseUrl)
+    }
 
     /** Full verification probe (B6): health + credentials + one-shot WS + capability bits. */
-    suspend fun verifyFleet(record: ConnectionRecord): FleetProbeResult =
+    suspend fun verifyFleet(record: ConnectionRecord): FleetProbeResult = withContext(Dispatchers.IO) {
         FleetProbe.run(client, record.baseUrl, record.auth)
+    }
 
     private suspend fun reconcile(records: List<ConnectionRecord>) {
         val wanted = records.associateBy { it.id }

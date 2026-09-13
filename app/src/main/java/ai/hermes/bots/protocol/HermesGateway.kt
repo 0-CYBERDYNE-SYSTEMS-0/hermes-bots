@@ -3,6 +3,7 @@ package ai.hermes.bots.protocol
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -98,7 +100,11 @@ class HermesGateway(
         val deferred = CompletableDeferred<RpcResponse>()
         pending[key] = deferred
         try {
-            val sent = socket.send(JsonRpc.encodeRequest(id, method, params))
+            // D2: RealWebSocket.send schedules a writer task on OkHttp's shared TaskRunner
+            // (global lock). Senders here run on caller contexts (ViewModels = Main), so the
+            // send is confined to IO — the ANR trace showed Main's IME dispatch contending
+            // with TaskRunner/TaskQueue.shutdown() on that lock.
+            val sent = withContext(Dispatchers.IO) { socket.send(JsonRpc.encodeRequest(id, method, params)) }
             if (!sent) throw GatewayNotReadyException(socket.state.value)
             val response = withTimeout(timeoutMs) { deferred.await() }
             response.error?.let { throw RpcException(it) }

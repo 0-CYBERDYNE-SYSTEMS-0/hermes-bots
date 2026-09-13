@@ -2,6 +2,7 @@ package ai.hermes.bots.ui.components
 
 import ai.hermes.bots.data.AvatarImage
 import android.graphics.BitmapFactory
+import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
@@ -17,13 +18,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
+
+/** Pose of a drawn face: [Idle] blinks on the lazy window; [Working] adds the working pose (§3.2). */
+enum class FaceState { Idle, Working }
 
 /**
  * Deterministic "blobatar" face (desktop avatar.tsx parity): name → hashed shape,
@@ -58,6 +67,8 @@ fun FaceAvatar(
     size: Dp,
     modifier: Modifier = Modifier,
     real: AvatarImage? = null,
+    state: FaceState = FaceState.Idle,
+    a11yLabel: String? = null,
 ) {
     if (real != null) {
         val bitmap = remember(real.bytes) {
@@ -66,7 +77,7 @@ fun FaceAvatar(
         if (bitmap != null) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
-                contentDescription = name,
+                contentDescription = a11yLabel ?: name,
                 modifier = modifier.size(size).clip(androidx.compose.foundation.shape.CircleShape),
                 contentScale = ContentScale.Crop,
             )
@@ -74,59 +85,104 @@ fun FaceAvatar(
         }
     }
     val spec = remember(name) { FaceHash.spec(name) }
-    Canvas(modifier = modifier.size(size)) {
-        drawFace(spec)
+    // Reduced motion (Settings.Global.ANIMATOR_DURATION_SCALE = 0): static idle face — no
+    // tick collection, no pose (§3.2). Read once per composition instance.
+    val context = LocalContext.current
+    val reducedMotion = remember {
+        Settings.Global.getFloat(
+            context.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    }
+    // Idle faces blink too, so Idle collects the shared clock as well (unless reduced motion).
+    val tick = if (reducedMotion) null else BotFaceClock.rememberTick()
+    val working = !reducedMotion && state == FaceState.Working
+    val tMs = tick?.value ?: 0L
+    // Face animation is decorative (§3.2): default faces are stripped from the a11y tree;
+    // callers that want a label pass a11yLabel ("{name}, {state}") instead.
+    val faceModifier = if (a11yLabel == null) {
+        modifier.size(size).clearAndSetSemantics { }
+    } else {
+        modifier.size(size).semantics { contentDescription = a11yLabel }
+    }
+    Canvas(modifier = faceModifier) {
+        drawFace(spec, tMs, working)
     }
 }
 
-private fun DrawScope.drawFace(spec: FaceSpec) {
+private fun DrawScope.drawFace(spec: FaceSpec, tMs: Long, working: Boolean) {
     val body = hslColor(spec.hue, 0.52f, 0.60f)
     val ink = if (body.luminance() < 0.35f) Color(0xFFF2F5F7) else Color(0xFF14181C)
     val s = this.size.minDimension
     val cx = this.size.width / 2f
     val cy = this.size.height / 2f
-    val bodyPath = Path()
-    when (spec.shape) {
-        0 -> bodyPath.addOval(Rect(cx - s / 2f, cy - s / 2f, cx + s / 2f, cy + s / 2f))
-        1 -> bodyPath.addRoundRect(
-            androidx.compose.ui.geometry.RoundRect(
-                cx - s / 2f, cy - s / 2f, cx + s / 2f, cy + s / 2f, CornerRadius(s * 0.22f),
-            ),
-        )
-        2 -> { // hexagon
-            for (i in 0 until 6) {
-                val angle = Math.PI / 3.0 * i - Math.PI / 6.0
-                val px = cx + (s * 0.48f * cos(angle)).toFloat()
-                val py = cy + (s * 0.48f * sin(angle)).toFloat()
-                if (i == 0) bodyPath.moveTo(px, py) else bodyPath.lineTo(px, py)
-            }
-            bodyPath.close()
-        }
-        3 -> { // triangle
-            bodyPath.moveTo(cx, cy - s * 0.48f)
-            bodyPath.lineTo(cx + s * 0.46f, cy + s * 0.40f)
-            bodyPath.lineTo(cx - s * 0.46f, cy + s * 0.40f)
-            bodyPath.close()
-        }
-        4 -> { // diamond
-            bodyPath.moveTo(cx, cy - s * 0.48f)
-            bodyPath.lineTo(cx + s * 0.44f, cy)
-            bodyPath.lineTo(cx, cy + s * 0.48f)
-            bodyPath.lineTo(cx - s * 0.44f, cy)
-            bodyPath.close()
-        }
-        else -> { // drop/egg blob
-            bodyPath.addOval(
-                Rect(cx - s * 0.44f, cy - s * 0.48f, cx + s * 0.44f, cy + s * 0.48f),
+    // Working pose (§3.2): subtle body squash + eyes drift up a touch; idle has neither.
+    val squashY = if (working) 0.96f else 1f
+    val eyeLift = if (working) s * 0.035f else 0f
+    val blinking = BotFaceClock.isBlinking(tMs, working)
+    scale(1f, squashY, pivot = Offset(cx, cy)) {
+        val bodyPath = Path()
+        when (spec.shape) {
+            0 -> bodyPath.addOval(Rect(cx - s / 2f, cy - s / 2f, cx + s / 2f, cy + s / 2f))
+            1 -> bodyPath.addRoundRect(
+                androidx.compose.ui.geometry.RoundRect(
+                    cx - s / 2f, cy - s / 2f, cx + s / 2f, cy + s / 2f, CornerRadius(s * 0.22f),
+                ),
             )
+            2 -> { // hexagon
+                for (i in 0 until 6) {
+                    val angle = Math.PI / 3.0 * i - Math.PI / 6.0
+                    val px = cx + (s * 0.48f * cos(angle)).toFloat()
+                    val py = cy + (s * 0.48f * sin(angle)).toFloat()
+                    if (i == 0) bodyPath.moveTo(px, py) else bodyPath.lineTo(px, py)
+                }
+                bodyPath.close()
+            }
+            3 -> { // triangle
+                bodyPath.moveTo(cx, cy - s * 0.48f)
+                bodyPath.lineTo(cx + s * 0.46f, cy + s * 0.40f)
+                bodyPath.lineTo(cx - s * 0.46f, cy + s * 0.40f)
+                bodyPath.close()
+            }
+            4 -> { // diamond
+                bodyPath.moveTo(cx, cy - s * 0.48f)
+                bodyPath.lineTo(cx + s * 0.44f, cy)
+                bodyPath.lineTo(cx, cy + s * 0.48f)
+                bodyPath.lineTo(cx - s * 0.44f, cy)
+                bodyPath.close()
+            }
+            else -> { // drop/egg blob
+                bodyPath.addOval(
+                    Rect(cx - s * 0.44f, cy - s * 0.48f, cx + s * 0.44f, cy + s * 0.48f),
+                )
+            }
         }
+        drawPath(bodyPath, body)
+        // two eyes; a blink squashes eye height to near zero. Positions are fractions of the
+        // size (desktop avatar.tsx parity). NOTE: this fixes the former double-`s` scaling
+        // (`gap * s` / `eyeY * s`) that drew generated eyes far off-canvas — without it the
+        // §3.2 blink/working pose would be invisible on every generated face.
+        // Triangle bodies taper sharply toward the apex, so the raw hash gap (up to 0.28 s
+        // + eye radius) can park an eye off the body — clamp it to the half-width at the
+        // eye row (with margin for the working pose's upward eye lift).
+        val gap = s * when (spec.shape) {
+            3 -> {
+                val eyeRow = (spec.eyeY - 0.035f).coerceAtLeast(0.07f) // 0.035 = working eyeLift
+                val halfWidthAtEye = 0.46f * eyeRow / 0.88f
+                maxOf(
+                    spec.eyeR + 0.02f,
+                    minOf(spec.eyeGap, halfWidthAtEye - spec.eyeR - 0.03f),
+                )
+            }
+            else -> spec.eyeGap
+        }
+        val eyeY = cy - s / 2f + s * spec.eyeY - eyeLift
+        val eyeR = s * spec.eyeR
+        val eyeH = eyeR * (if (blinking) 0.12f else 1f)
+        drawOval(ink, topLeft = Offset(cx - gap - eyeR, eyeY - eyeH), size = Size(eyeR * 2f, eyeH * 2f))
+        drawOval(ink, topLeft = Offset(cx + gap - eyeR, eyeY - eyeH), size = Size(eyeR * 2f, eyeH * 2f))
     }
-    drawPath(bodyPath, body)
-    // two eyes
-    val gap = s * spec.eyeGap
-    val eyeY = s * spec.eyeY
-    drawCircle(ink, radius = s * spec.eyeR, center = Offset(cx - gap * s, cy - s / 2f + eyeY * s))
-    drawCircle(ink, radius = s * spec.eyeR, center = Offset(cx + gap * s, cy - s / 2f + eyeY * s))
 }
 
 // Fallback for androidx.compose.ui.graphics.hsl (unresolved in this build):

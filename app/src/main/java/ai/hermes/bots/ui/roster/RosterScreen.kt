@@ -5,8 +5,11 @@ import ai.hermes.bots.data.BotRow
 import ai.hermes.bots.data.MergedBot
 import ai.hermes.bots.protocol.SocketState
 import ai.hermes.bots.ui.components.FaceAvatar
+import ai.hermes.bots.ui.components.FaceState
 import ai.hermes.bots.ui.components.PulsingDot
+import ai.hermes.bots.ui.theme.BotAccent
 import ai.hermes.bots.ui.theme.Dimens
+import ai.hermes.bots.ui.theme.LocalBrandDark
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -101,6 +104,9 @@ fun RosterScreen(
     val socketStates by vm.socketStates.collectAsState()
     val transientError by vm.transientError.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    // Resolved dark flag (in-app theme override wins over system) — per-bot accents (§3.1)
+    // must follow the same theme the user picked.
+    val darkTheme = LocalBrandDark.current
     var search by remember { mutableStateOf("") }
     var showHidden by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -261,9 +267,16 @@ fun RosterScreen(
                                         .padding(4.dp),
                                 ) {
                                     Box {
-                                        FaceAvatar(m.name, 56.dp, real = avatars[avatarKey(m.primary.bot)])
+                                        FaceAvatar(
+                                            m.name,
+                                            56.dp,
+                                            real = avatars[avatarKey(m.primary.bot)],
+                                            state = FaceState.Working,
+                                            a11yLabel = "${m.displayName ?: m.name}, working",
+                                        )
                                         PulsingDot(
                                             dotSize = 12.dp,
+                                            color = BotAccent.color(m.name, darkTheme),
                                             borderColor = MaterialTheme.colorScheme.background,
                                             modifier = Modifier.align(Alignment.BottomEnd),
                                         )
@@ -392,6 +405,8 @@ fun RosterScreen(
                         m.displayName ?: m.name,
                         40.dp,
                         real = avatars[avatarKey(m.primary.bot)],
+                        state = faceStateOf(m),
+                        a11yLabel = faceLabel(m),
                     )
                     Column {
                         Text(
@@ -461,6 +476,20 @@ fun RosterScreen(
 
 private fun avatarKey(bot: BotRow): String = "${bot.connectionId}:${bot.name}"
 
+// Checklist 13: every face carries a11y text "{name}, {state}"; the drawn blink/pose is
+// decorative and excluded from the a11y tree (FaceAvatar handles that when a11yLabel == null).
+private fun faceStateOf(bot: MergedBot): FaceState =
+    if (bot.activeNow) FaceState.Working else FaceState.Idle
+
+private fun faceLabel(bot: MergedBot): String {
+    val name = bot.displayName ?: bot.name
+    return when {
+        bot.activeNow -> "$name, working"
+        bot.unread -> "$name, unread"
+        else -> "$name, idle"
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MergedBotRowItem(
@@ -472,6 +501,7 @@ private fun MergedBotRowItem(
     chip: String? = null,
 ) {
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val darkTheme = LocalBrandDark.current
     Row(
         modifier
             .fillMaxWidth()
@@ -487,7 +517,13 @@ private fun MergedBotRowItem(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box {
-            FaceAvatar(bot.name, 48.dp, real = avatar)
+            FaceAvatar(
+                bot.name,
+                48.dp,
+                real = avatar,
+                state = faceStateOf(bot),
+                a11yLabel = faceLabel(bot),
+            )
             if (bot.unread) {
                 Box(
                     Modifier
@@ -497,10 +533,12 @@ private fun MergedBotRowItem(
                         .background(MaterialTheme.colorScheme.secondary),
                 )
             }
-            // Presence lives ON the avatar (A3): working = pulsing orange dot; idle = nothing.
+            // Presence lives ON the avatar (A3): working = pulsing per-bot accent dot (§3.1,
+            // not brand chrome); idle = nothing. The unread dot above stays burnt orange.
             if (bot.activeNow) {
                 PulsingDot(
                     dotSize = 12.dp,
+                    color = BotAccent.color(bot.name, darkTheme),
                     borderColor = MaterialTheme.colorScheme.background,
                     modifier = Modifier.align(Alignment.BottomEnd),
                 )

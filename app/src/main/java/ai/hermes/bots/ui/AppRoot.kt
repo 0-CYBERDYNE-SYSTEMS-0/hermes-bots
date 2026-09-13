@@ -6,6 +6,7 @@ import ai.hermes.bots.data.FleetProvisioning
 import ai.hermes.bots.data.GatewayDraft
 import ai.hermes.bots.ui.anychat.AnyChatRoomScreen
 import ai.hermes.bots.ui.anychat.AnyChatScreen
+import ai.hermes.bots.ui.activity.ActivityScreen
 import ai.hermes.bots.ui.chat.ChatScreen
 import ai.hermes.bots.ui.connections.ConnectionsScreen
 import ai.hermes.bots.ui.groups.GroupChatScreen
@@ -101,13 +102,27 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null, pendingChat: PendingChatLaunch? = 
             RosterScreen(
                 onOpenChat = { connectionId, botName -> nav.navigate("chat/$connectionId/${Uri.encode(botName)}") },
                 onOpenGateways = { nav.navigate("connections") },
-                onOpenNotifications = { nav.navigate("notifications") },
+                onOpenNotifications = { nav.navigate("activity") },
                 onOpenSettings = { nav.navigate("settings") },
                 onNewBot = { nav.navigate("editor") },
                 onEditBot = { connectionId, botName -> nav.navigate("editor/$connectionId/${Uri.encode(botName)}") },
                 onOpenRoutines = { connectionId, botName -> nav.navigate("routines/$connectionId/${Uri.encode(botName)}") },
                 onOpenGroups = { nav.navigate("groups") },
                 onOpenAnyChat = { nav.navigate("anychat") },
+            )
+        }
+        // Activity console (UI-SPEC.md §4.6): the roster bell lands here; the older
+        // "notifications" route stays as the full history list (§4.6 Recent → History).
+        composable("activity") {
+            ActivityScreen(
+                onBack = { nav.popBackStack() },
+                onOpenChat = { connectionId, botName ->
+                    nav.navigate("chat/${Uri.encode(connectionId)}/${Uri.encode(botName)}")
+                },
+                onOpenRoutines = { connectionId, botName ->
+                    nav.navigate("routines/$connectionId/${Uri.encode(botName)}")
+                },
+                onOpenHistory = { nav.navigate("notifications") },
             )
         }
         composable("notifications") {

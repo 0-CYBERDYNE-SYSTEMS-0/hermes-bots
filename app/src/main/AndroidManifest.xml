@@ -29,6 +29,12 @@
                 <data android:scheme="hermesbots" android:host="add-gateway" />
             </intent-filter>
         </activity>
+
+        <!-- Approval notification quick actions (UI-SPEC.md §4.7): not exported — only
+             this app's notifications can target it. -->
+        <receiver
+            android:name=".notify.ApprovalActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

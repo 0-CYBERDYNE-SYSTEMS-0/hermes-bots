@@ -9,6 +9,7 @@ import ai.hermes.bots.ui.components.AssistantBubbleShape
 import ai.hermes.bots.ui.components.ChatComposer
 import ai.hermes.bots.ui.components.UserBubbleShape
 import ai.hermes.bots.ui.components.WorkingStatus
+import ai.hermes.bots.ui.theme.BotAccent
 import ai.hermes.bots.ui.theme.Dimens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -16,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -26,7 +28,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +44,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -50,6 +55,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -74,6 +80,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
@@ -84,6 +94,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.viewModelFactory
+import android.util.Log
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -112,20 +124,68 @@ fun ChatScreen(
     val itemTimes by vm.itemTimes.collectAsState()
     val presence by vm.presence.collectAsState()
     val gatewayLabel by vm.gatewayLabel.collectAsState()
+    val bubbleMode by vm.bubbleMode.collectAsState()
     var draft by remember { mutableStateOf("") }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.attachImageFromUri(uri)
     }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val listState = rememberLazyListState()
-    val rows = remember(ui.items, itemTimes) { Transcript.build(ui.items, itemTimes) }
+    // D4: blank assistant items (message.start anchors that never received text, history
+    // assistant turns that only carried tool calls) and fully blank tool items render as
+    // invisible pills — desktop shows nothing for them, so neither do we. Bubble Mode drops
+    // even streaming-blank bot bubbles: the typing bubble stands in while nothing is visible.
+    val visibleItems = remember(ui.items, bubbleMode) { ui.items.filter { if (bubbleMode) it.bubbleVisible else it.docVisible } }
+    val rows = remember(visibleItems, itemTimes) { Transcript.build(visibleItems, itemTimes) }
+    val bubbleRows = remember(visibleItems, itemTimes) { buildBubbleListRows(visibleItems, itemTimes) }
+    // §4.2 rev: while the turn is streaming with no visible text yet, a typing bubble stands in.
+    val showTyping = bubbleMode && ui.streaming && !streamingTextVisible(visibleItems)
+    val lastIndex = if (bubbleMode) {
+        (bubbleRows.size - 1 + if (showTyping) 1 else 0).coerceAtLeast(0)
+    } else {
+        rows.lastIndex
+    }
 
     // Stick to the bottom ONLY while the reader is there. Scrolling up to reread history
     // must never be hijacked by the next streamed chunk — a jump pill offers the way back.
-    val atBottom by remember {
-        androidx.compose.runtime.derivedStateOf {
+    //
+    // D1: `wasAtBottom` snapshots the scroll state as of the latest SCROLL movement, and only
+    // scroll movements can flip it. Appending rows never moves the scroll position, so when
+    // the size-keyed effect below runs, this flag still answers "was the reader at the bottom
+    // BEFORE the content grew?" (a derivedStateOf over live layoutInfo measures after the
+    // count already grew and misreads a bottom-parked reader as scrolled away).
+    //
+    // D1-tall: "at the end" means the viewport is scrolled to max OR the last row's BOTTOM
+    // edge is on screen — full visibility must NOT be required, because a row taller than
+    // the viewport is never fully visible, yet docking its bottom still counts as at-bottom.
+    // The only thing that can flip the flag false is the scroll position moving toward the
+    // transcript top; pure appends and downward travel (incl. the programmatic re-anchor)
+    // keep the previous value.
+    var wasAtBottom by remember { mutableStateOf(true) }
+    var prevScrollPos by remember { mutableStateOf<ScrollPos?>(null) }
+    LaunchedEffect(listState) {
+        androidx.compose.runtime.snapshotFlow {
+            ScrollPos(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+        }.collect { snap ->
             val info = listState.layoutInfo
-            info.visibleItemsInfo.lastOrNull()?.let { it.index >= info.totalItemsCount - 1 } ?: true
+            val last = info.visibleItemsInfo.lastOrNull()
+            val atEndNow = (last != null && last.index >= info.totalItemsCount - 1 &&
+                last.offset + last.size <= info.viewportEndOffset + DockSlackPx) ||
+                !listState.canScrollForward
+            val prev = prevScrollPos
+            val scrolledUp = prev != null && snap.isBefore(prev)
+            wasAtBottom = when {
+                atEndNow -> true
+                scrolledUp -> false
+                else -> wasAtBottom
+            }
+            Log.d(
+                "D1DBG",
+                "collect snap=$snap atEndNow=$atEndNow scrolledUp=$scrolledUp " +
+                    "canFwd=${listState.canScrollForward} last=${last?.let { "${it.index}:${it.offset}+${it.size} vs ve=${info.viewportEndOffset}" }} " +
+                    "total=${info.totalItemsCount} -> wasAtBottom=$wasAtBottom",
+            )
+            prevScrollPos = snap
         }
     }
     var userScrolledUp by remember { mutableStateOf(false) }
@@ -139,18 +199,23 @@ fun ChatScreen(
             }
         }
     }
-    LaunchedEffect(atBottom) { if (atBottom) userScrolledUp = false }
-    LaunchedEffect(rows.size, ui.statusText) {
-        if (rows.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(wasAtBottom) { if (wasAtBottom) userScrolledUp = false }
+    LaunchedEffect(rows.size, bubbleRows.size, showTyping, ui.statusText) {
+        Log.d(
+            "D1DBG",
+            "effect rows=${rows.size} bubble=${bubbleRows.size} typing=$showTyping " +
+                "status=${ui.statusText != null} lastIndex=$lastIndex wasAtBottom=$wasAtBottom jumped=$jumpedToLatest",
+        )
+        if (rows.isEmpty() && !showTyping) return@LaunchedEffect
         if (!jumpedToLatest) {
             jumpedToLatest = true
             userScrolledUp = false
-            listState.scrollToItem(rows.lastIndex)
-        } else if (atBottom) {
-            listState.animateScrollToItem(rows.lastIndex)
+            listState.dockToLatest(lastIndex, animated = false)
+        } else if (wasAtBottom) {
+            listState.dockToLatest(lastIndex, animated = true)
         }
     }
-    val showJump = userScrolledUp && !atBottom && rows.isNotEmpty()
+    val showJump = userScrolledUp && !wasAtBottom && (rows.isNotEmpty() || showTyping)
 
     var headerMenu by remember { mutableStateOf(false) }
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -195,6 +260,14 @@ fun ChatScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = "More options")
                     }
                     DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Bubble mode") },
+                            onClick = {
+                                headerMenu = false
+                                vm.toggleBubbleMode()
+                            },
+                            trailingIcon = { Checkbox(checked = bubbleMode, onCheckedChange = null) },
+                        )
                         DropdownMenuItem(
                             text = { Text("Routines") },
                             onClick = { headerMenu = false; onOpenRoutines() },
@@ -254,13 +327,31 @@ fun ChatScreen(
                                 )
                             }
                         }
-                        items(rows, key = { it.key }) { row ->
+                        val displayCount = if (bubbleMode) bubbleRows.size else rows.size
+                        items(count = displayCount, key = { idx ->
+                            if (bubbleMode) bubbleRows[idx].key else rows[idx].key
+                        }) { idx ->
                             androidx.compose.foundation.layout.Box(Modifier.animateItem()) {
-                                when (row) {
-                                    is TranscriptRow.Message -> ChatItemView(row.item, botName)
-                                    is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
+                                if (bubbleMode) {
+                                    when (val row = bubbleRows[idx]) {
+                                        is BubbleListRow.TimeSeparator -> TimeSeparatorRow(row.label)
+                                        is BubbleListRow.Group -> when (val bubble = row.row) {
+                                            is BubbleRow.User -> BubbleUserView(bubble.item)
+                                            is BubbleRow.Bot -> BubbleBotView(bubble.item, botName)
+                                            is BubbleRow.Work -> BubbleWorkGroup(bubble.items)
+                                            is BubbleRow.Always -> BubbleAlwaysView(bubble.item, botName)
+                                        }
+                                    }
+                                } else {
+                                    when (val row = rows[idx]) {
+                                        is TranscriptRow.Message -> ChatItemView(row.item, botName)
+                                        is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
+                                    }
                                 }
                             }
+                        }
+                        if (bubbleMode && showTyping) {
+                            item(key = "typing") { TypingBubble() }
                         }
                     }
                     androidx.compose.animation.AnimatedVisibility(
@@ -280,7 +371,7 @@ fun ChatScreen(
                                 .clickable {
                                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     userScrolledUp = false
-                                    scope?.launch { listState.animateScrollToItem(rows.lastIndex) }
+                                    scope?.launch { listState.animateScrollToItem(lastIndex) }
                                 },
                         ) {
                             Icon(
@@ -488,7 +579,7 @@ private fun ToolChip(item: ChatItem) {
                     if (item.streaming) {
                         ai.hermes.bots.ui.components.PulsingDot(dotSize = 8.dp)
                         Text(
-                            "Running ${item.toolName ?: "tool"}…",
+                            "Running ${item.toolName?.takeIf { it.isNotBlank() } ?: "tool"}…",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.secondary,
                         )
@@ -500,7 +591,7 @@ private fun ToolChip(item: ChatItem) {
                             tint = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            item.toolName ?: "tool",
+                            item.toolName?.takeIf { it.isNotBlank() } ?: "tool",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -659,4 +750,275 @@ private fun ChoiceRow(
             modifier = Modifier.alpha(if (dimmed) 0.5f else 1f),
         )
     }
+}
+
+// ---------- Bubble Mode (UI-SPEC.md §4.2 rev) ----------
+
+/** Scroll-position snapshot for the D1 at-bottom tracker (data class: distinct-until-changed). */
+private data class ScrollPos(val firstVisibleIndex: Int, val firstVisibleOffset: Int) {
+    /** True when this scroll position sits earlier in the transcript than [other] (scrolled up). */
+    fun isBefore(other: ScrollPos): Boolean =
+        firstVisibleIndex < other.firstVisibleIndex ||
+            (firstVisibleIndex == other.firstVisibleIndex && firstVisibleOffset < other.firstVisibleOffset)
+}
+
+/** Tolerance for "last row's bottom edge is docked at the viewport bottom" (px). */
+private const val DockSlackPx = 8
+
+/**
+ * Scroll to [index], then consume any remaining scrollable distance so the row's BOTTOM edge
+ * docks at the viewport bottom. `scrollToItem`/`animateScrollToItem` align the item's TOP —
+ * for a last row taller than the viewport that leaves its tail cut off (D1-tall), so after
+ * the jump we wait for the post-jump measure and scroll the leftover distance (clamped by
+ * the scroll range, so over-estimating is harmless).
+ */
+private suspend fun LazyListState.dockToLatest(index: Int, animated: Boolean) {
+    if (animated) animateScrollToItem(index) else scrollToItem(index)
+    val info = androidx.compose.runtime.snapshotFlow { layoutInfo }
+        .first { it.visibleItemsInfo.lastOrNull()?.index == it.totalItemsCount - 1 }
+    val last = info.visibleItemsInfo.lastOrNull() ?: return
+    val over = last.offset + last.size - info.viewportEndOffset
+    if (over > 0) {
+        if (animated) animateScrollBy(over.toFloat()) else scrollBy(over.toFloat())
+    }
+}
+
+/** One LazyColumn row in Bubble Mode: a grouped bubble row or a time separator. */
+private sealed interface BubbleListRow {
+    val key: String
+
+    data class Group(val row: BubbleRow) : BubbleListRow {
+        override val key: String = when (row) {
+            is BubbleRow.Work -> "work-" + row.items.first().id
+            is BubbleRow.User -> row.item.id
+            is BubbleRow.Bot -> row.item.id
+            is BubbleRow.Always -> row.item.id
+        }
+    }
+
+    data class TimeSeparator(val atMs: Long, val label: String) : BubbleListRow {
+        override val key: String = "bsep-$atMs"
+    }
+}
+
+/**
+ * Bubble Mode rows with time separators placed exactly where Transcript would put them:
+ * keyed off the first receive stamp in each group, same gap/day rules as document mode.
+ */
+private fun buildBubbleListRows(items: List<ChatItem>, times: Map<String, Long>): List<BubbleListRow> {
+    val out = mutableListOf<BubbleListRow>()
+    var prevMs: Long? = null
+    buildBubbleRows(items).forEach { row ->
+        val at = when (row) {
+            is BubbleRow.Work -> row.items.firstNotNullOfOrNull { times[it.id] }
+            is BubbleRow.User -> times[row.item.id]
+            is BubbleRow.Bot -> times[row.item.id]
+            is BubbleRow.Always -> times[row.item.id]
+        }
+        if (at != null && Transcript.needsSeparator(prevMs, at)) {
+            out += BubbleListRow.TimeSeparator(at, Transcript.label(at))
+        }
+        out += BubbleListRow.Group(row)
+        if (at != null) prevMs = at
+    }
+    return out
+}
+
+/** True when the transcript's last item is a streaming assistant turn with visible text. */
+private fun streamingTextVisible(items: List<ChatItem>): Boolean {
+    val last = items.lastOrNull() ?: return false
+    return last.kind == ItemKind.ASSISTANT && last.streaming && last.text.isNotBlank()
+}
+
+/**
+ * D4 visibility gates. A TOOL item renders only when it has a name, summary or args text;
+ * an assistant item renders when it has text — document mode keeps a streaming blank as the
+ * caret-only "started typing" container, bubble mode replaces it with the typing bubble.
+ */
+private val ChatItem.docVisible: Boolean
+    get() = when (kind) {
+        ItemKind.TOOL -> !toolName.isNullOrBlank() || !summary.isNullOrBlank() || text.isNotBlank()
+        ItemKind.ASSISTANT -> streaming || text.isNotBlank()
+        else -> true
+    }
+
+private val ChatItem.bubbleVisible: Boolean
+    get() = when (kind) {
+        ItemKind.TOOL -> !toolName.isNullOrBlank() || !summary.isNullOrBlank() || text.isNotBlank()
+        ItemKind.ASSISTANT -> text.isNotBlank()
+        else -> true
+    }
+
+@Composable
+private fun BubbleUserView(item: ChatItem) {
+    val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shape = UserBubbleShape,
+            modifier = Modifier.clip(UserBubbleShape).copyOnLongPress(item.text),
+        ) {
+            Text(
+                item.text,
+                modifier = Modifier
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .widthIn(max = maxBubbleWidth),
+            )
+        }
+    }
+}
+
+/** Bot turn: raised bubble with the per-bot accent as a 3 dp leading edge (§4.2 rev). */
+@Composable
+private fun BubbleBotView(item: ChatItem, botName: String) {
+    val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val accent = BotAccent.color(botName, darkTheme)
+    val accentWidth = 3.dp
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = AssistantBubbleShape,
+        shadowElevation = 1.dp,
+        modifier = Modifier.padding(start = 4.dp).widthIn(min = 64.dp),
+    ) {
+        Row(
+            Modifier
+                .clip(AssistantBubbleShape)
+                .drawBehind {
+                    drawRect(
+                        color = accent,
+                        topLeft = Offset.Zero,
+                        size = Size(accentWidth.toPx(), size.height),
+                    )
+                }
+                .copyOnLongPress(item.text)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .widthIn(max = maxBubbleWidth),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            MarkdownText(text = item.text, modifier = Modifier.weight(1f, fill = false))
+            if (item.streaming) BlinkingCaret()
+        }
+    }
+}
+
+/** Contiguous tool run: one compact chip, expanding inline to the existing tool chips. */
+@Composable
+private fun BubbleWorkGroup(items: List<ChatItem>) {
+    var open by remember(items.first().id) { mutableStateOf(false) }
+    val running = items.any { it.streaming }
+    Column(Modifier.fillMaxWidth()) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier
+                .clip(MaterialTheme.shapes.small)
+                .clickable { open = !open },
+        ) {
+            Row(
+                Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (running) ai.hermes.bots.ui.components.PulsingDot(dotSize = 8.dp)
+                Text(
+                    "${if (open) "Hide work" else "Show work"} · ${items.size} ${if (items.size == 1) "step" else "steps"}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    if (open) "▾" else "▸",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = open,
+            enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items.forEach { ToolChip(it) }
+            }
+        }
+    }
+}
+
+/** Relay lines and errors: distinct, always visible — errors keep the shared ErrorLine. */
+@Composable
+private fun BubbleAlwaysView(item: ChatItem, botName: String) {
+    if (item.kind == ItemKind.ERROR) {
+        ai.hermes.bots.ui.components.ErrorLine(raw = item.text, botName = botName)
+        return
+    }
+    val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.widthIn(max = maxBubbleWidth),
+    ) {
+        Row(
+            Modifier
+                .clip(MaterialTheme.shapes.small)
+                .copyOnLongPress(item.text)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                "↔",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "Bot relay",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                MarkdownText(text = item.text)
+            }
+        }
+    }
+}
+
+/** §4.2 rev: the "…" stand-in while the turn is streaming with no visible text yet. */
+@Composable
+private fun TypingBubble() {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = AssistantBubbleShape,
+        modifier = Modifier.padding(start = 4.dp),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TypingDot(0)
+            TypingDot(180)
+            TypingDot(360)
+        }
+    }
+}
+
+/** One dot of the typing bubble: gentle alpha pulse, full cycle under 1 s. */
+@Composable
+private fun TypingDot(startOffsetMs: Int) {
+    val transition = rememberInfiniteTransition(label = "typing-dot")
+    val alpha by transition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(400),
+            repeatMode = RepeatMode.Reverse,
+            initialStartOffset = StartOffset(startOffsetMs),
+        ),
+        label = "typing-dot-alpha",
+    )
+    androidx.compose.foundation.layout.Box(
+        Modifier
+            .size(7.dp)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha), CircleShape),
+    )
 }

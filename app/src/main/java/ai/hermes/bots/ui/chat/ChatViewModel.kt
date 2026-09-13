@@ -82,6 +82,14 @@ class ChatViewModel(
 
     val avatars = graph.roster.avatars
 
+    /** §4.2 rev Bubble Mode: iMessage-style transcript toggle, persisted in settings. */
+    val bubbleMode: StateFlow<Boolean> = graph.settings.bubbleMode
+
+    /** Flips the persisted toggle behind the chat overflow "Bubble mode" item. */
+    fun toggleBubbleMode() {
+        viewModelScope.launch { graph.settings.setBubbleMode(!bubbleMode.value) }
+    }
+
     /** B4: the owning gateway's label when this bot's name collides across gateways. */
     val gatewayLabel: StateFlow<String?> = combine(graph.roster.roster, graph.connections.connections) { rows, conns ->
         val row = rows.firstOrNull { it.bot.connectionId == connectionId && it.bot.name == botName }

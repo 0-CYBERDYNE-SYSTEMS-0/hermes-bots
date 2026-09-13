@@ -82,6 +82,11 @@ object Catalog {
     const val EVENT_CLARIFY_REQUEST = "clarify.request"
     const val EVENT_SUDO_REQUEST = "sudo.request"
     const val EVENT_SECRET_REQUEST = "secret.request"
+    // PROTOCOL.md §5.5: blocking-prompt expiry mirrors — `*.expire {request_id}`.
+    const val EVENT_APPROVAL_EXPIRE = "approval.expire"
+    const val EVENT_CLARIFY_EXPIRE = "clarify.expire"
+    const val EVENT_SUDO_EXPIRE = "sudo.expire"
+    const val EVENT_SECRET_EXPIRE = "secret.expire"
     const val EVENT_MCP_SETUP_REQUEST = "mcp.setup.request"
     const val EVENT_SESSION_TITLE = "session.title"
     const val EVENT_SESSION_INFO = "session.info"

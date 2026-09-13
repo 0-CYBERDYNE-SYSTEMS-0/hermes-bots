@@ -40,6 +40,7 @@ class SettingsRepository(private val context: Context) {
     private val keyNotificationsEnabled = booleanPreferencesKey("notifications_enabled")
     private val keyNotificationHistory = stringPreferencesKey("notification_history_json")
     private val keyHistorySeenAt = longPreferencesKey("history_seen_at")
+    private val keyBubbleMode = booleanPreferencesKey("bubble_mode")
 
     val themeMode: StateFlow<String> = context.settingsStore.data
         .map { prefs ->
@@ -60,6 +61,11 @@ class SettingsRepository(private val context: Context) {
         .map { prefs -> prefs[keyHistorySeenAt] ?: 0L }
         .stateIn(scope, SharingStarted.Eagerly, 0L)
 
+    /** Bubble Mode (UI-SPEC.md §4.2 rev): iMessage-style Bot Chat transcript; default ON. */
+    val bubbleMode: StateFlow<Boolean> = context.settingsStore.data
+        .map { prefs -> prefs[keyBubbleMode] ?: true }
+        .stateIn(scope, SharingStarted.Eagerly, true)
+
     suspend fun setThemeMode(mode: String) {
         if (mode !in THEME_MODES) return
         context.settingsStore.edit { prefs -> prefs[keyThemeMode] = mode }
@@ -67,6 +73,11 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setNotificationsEnabled(enabled: Boolean) {
         context.settingsStore.edit { prefs -> prefs[keyNotificationsEnabled] = enabled }
+    }
+
+    /** Persists the chat overflow "Bubble mode" toggle; survives process death (checklist 11). */
+    suspend fun setBubbleMode(enabled: Boolean) {
+        context.settingsStore.edit { prefs -> prefs[keyBubbleMode] = enabled }
     }
 
     /** Stamps the seen watermark; called when the Notifications screen is opened (SV-14). */

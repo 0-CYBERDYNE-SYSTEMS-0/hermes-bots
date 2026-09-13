@@ -36,6 +36,10 @@ data class CronJob(
     val enabled: Boolean,
     val scheduleText: String,
     val prompt: String,
+    // Server job dicts carry ISO-8601 run stamps that MAY BE ABSENT/NULL — parse
+    // defensively (UI-SPEC.md §4.6 Upcoming: never render a fake time).
+    val nextRunAtMs: Long? = null,
+    val lastRunAtMs: Long? = null,
 )
 
 /**
@@ -187,7 +191,31 @@ class CronRepository(
                 enabled = (o["enabled"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true,
                 scheduleText = schedule,
                 prompt = str("prompt").orEmpty(),
+                nextRunAtMs = parseIsoMs(str("next_run_at")),
+                lastRunAtMs = parseIsoMs(str("last_run_at")),
             )
+        }
+
+        /**
+         * Defensive ISO-8601 → epoch ms (server stamps are tz-aware `datetime.isoformat()`).
+         * Absent/blank/unparseable → null, never a fabricated time (UI-SPEC.md §4.6).
+         */
+        fun parseIsoMs(text: String?): Long? {
+            val clean = text?.trim().orEmpty()
+            if (clean.isEmpty()) return null
+            return try {
+                java.time.OffsetDateTime.parse(clean).toInstant().toEpochMilli()
+            } catch (_: Exception) {
+                try {
+                    java.time.Instant.parse(clean).toEpochMilli()
+                } catch (_: Exception) {
+                    try {
+                        java.time.LocalDateTime.parse(clean).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
         }
     }
 }

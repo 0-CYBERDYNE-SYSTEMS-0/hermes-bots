@@ -2,6 +2,9 @@ package ai.hermes.bots
 
 import ai.hermes.bots.data.ConnectionRepository
 import ai.hermes.bots.data.AnyChatRepository
+import ai.hermes.bots.data.ApprovalInbox
+import ai.hermes.bots.data.ApprovalRpcSender
+import ai.hermes.bots.data.CanonicalChat
 import ai.hermes.bots.data.CronRepository
 import ai.hermes.bots.data.FleetProvisioningCoordinator
 import ai.hermes.bots.data.GatewayManager
@@ -31,6 +34,16 @@ class AppGraph(private val app: HermesBotsApp) {
     val provisioning = FleetProvisioningCoordinator(connections)
     val anyChat = AnyChatRepository(app, gateways, roster, scope)
 
+    /**
+     * Cross-connection "Needs you" inbox (UI-SPEC.md §4.6): blocking-prompt events land
+     * here; respond rides the owning connection's gateway socket.
+     */
+    val inbox = ApprovalInbox(sender = ApprovalRpcSender { connectionId, method, params ->
+        val conn = gateways.live.value[connectionId]
+            ?: throw IllegalStateException("connection $connectionId is not live")
+        conn.gateway.request(method, params)
+    })
+
     private val notifier = BotNotifier(app)
     private val notifyJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
 
@@ -40,7 +53,7 @@ class AppGraph(private val app: HermesBotsApp) {
         roster.start()
         cron.start()
         relay.start()
-        notifier.ensureChannel()
+        notifier.ensureChannels()
         scope.launch {
             gateways.live.collect { live ->
                 // Keyed per connection so reconnects never stack duplicate collectors.
@@ -78,10 +91,58 @@ class AppGraph(private val app: HermesBotsApp) {
                                         }
                                     }
                                 }
+                                // Blocking prompts (approval/clarify/sudo/secret) + expiry
+                                // (PROTOCOL.md §5.5) feed the Activity screen's Needs-you
+                                // inbox; while backgrounded they also raise a HIGH notification
+                                // with verbatim quick actions (UI-SPEC.md §4.6/§4.7).
+                                when (ev.type) {
+                                    Catalog.EVENT_APPROVAL_REQUEST,
+                                    Catalog.EVENT_CLARIFY_REQUEST,
+                                    Catalog.EVENT_SUDO_REQUEST,
+                                    Catalog.EVENT_SECRET_REQUEST,
+                                    -> {
+                                        val card = CanonicalChat.parseCard(ev.type, ev.payload) ?: return@collect
+                                        val bot = roster.roster.value.firstOrNull { it.bot.canonicalSessionId == ev.sessionId }
+                                        val label = bot?.bot?.displayName ?: bot?.bot?.name ?: "Hermes Bots"
+                                        val stored = inbox.onBlockingPrompt(
+                                            connectionId = id,
+                                            botName = bot?.bot?.name,
+                                            sessionId = ev.sessionId,
+                                            card = card,
+                                        )
+                                        if (stored != null &&
+                                            app.activitiesInForeground == 0 &&
+                                            settings.notificationsEnabled.value
+                                        ) {
+                                            notifier.notifyApproval(stored, label)
+                                        }
+                                    }
+                                    Catalog.EVENT_APPROVAL_EXPIRE,
+                                    Catalog.EVENT_CLARIFY_EXPIRE,
+                                    Catalog.EVENT_SUDO_EXPIRE,
+                                    Catalog.EVENT_SECRET_EXPIRE,
+                                    -> {
+                                        val requestId =
+                                            (ev.payload["request_id"] as? kotlinx.serialization.json.JsonPrimitive)
+                                                ?.takeIf { it.isString }?.content
+                                        if (requestId != null) inbox.onExpire(requestId)
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
+        // Resolving removes it everywhere (UI-SPEC.md §4.6): when a request leaves the
+        // inbox (answered via chat, quick action, or notification), retire its system
+        // notification too.
+        scope.launch {
+            var known = inbox.pending.value.map { it.card.requestId }.toSet()
+            inbox.pending.collect { rows ->
+                val ids = rows.map { it.card.requestId }.toSet()
+                (known - ids).forEach { notifier.cancelApproval(it) }
+                known = ids
             }
         }
     }

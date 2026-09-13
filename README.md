@@ -22,7 +22,7 @@ parity** from a phone — the same bots experience the desktop app has, as a pur
   different gateways can message each other (`@handle` via the `message_agent` tool).
 - **Local notifications** — post notifications on the device for bot activity.
 
-**Deferred to v2** (per [DECISIONS.md](DECISIONS.md) #3): voice dictation, image generation,
+**Deferred to v2**: voice dictation, image generation,
 PTY terminal views, SSH-tunnel/cloud connections, OAuth-portal auth, themes.
 
 ## Building
@@ -141,7 +141,7 @@ Gateways → + → `http://<mac-tailnet-ip>:9300` → **User + pass** → Test �
 
 Each gateway serves that machine's `~/.hermes` — its bots appear in the roster under the
 connection's own section, and the app relays messages between bots on different gateways
-automatically. See [docs/FLEET.md](docs/FLEET.md) for a per-machine runbook.
+automatically.
 
 ## Architecture notes
 
@@ -182,13 +182,12 @@ automatically. See [docs/FLEET.md](docs/FLEET.md) for a per-machine runbook.
 Single-module Gradle project: `app/src/main/java/ai/hermes/bots/` is split into `protocol/`
 (WS/JSON-RPC/auth core), `data/` (repositories, DataStore), `ui/` (Compose screens:
 connections, roster, chat, editor, routines, groups, theme), `notify/` (local notifications);
-`scripts/` holds dev helpers (`env.sh`, `bootstrap-toolchain.sh`, `dev-gateways.sh`);
-mission/planning docs live in the repo root.
+`scripts/` holds dev + provisioning helpers (`env.sh`, `bootstrap-toolchain.sh`,
+`dev-gateways.sh`, `install-phone.sh`, `provision-tailnet-gateway.sh`, `verify-two-way.py`).
 
 - **[PROTOCOL.md](PROTOCOL.md)** is the wire contract — every RPC string the app speaks, with
   citations into the hermes-agent source. Do not invent variants.
-- Screenshots: `docs/`.
-- More docs: [AGENTS.md](AGENTS.md) (mission + machine map), [DECISIONS.md](DECISIONS.md)
-  (locked choices), [BOTS-MODE-PARITY.md](BOTS-MODE-PARITY.md) (parity matrix),
-  [UI-SPEC.md](UI-SPEC.md) (UI acceptance bar), [PLAN.md](PLAN.md) (phases/gates),
-  [HANDOFF.md](HANDOFF.md) (live session state).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

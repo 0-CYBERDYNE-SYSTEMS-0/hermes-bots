@@ -53,8 +53,8 @@ fi
 echo "▸ 5/5 launch + verify"
 adb -s "$SERIAL" shell am start -n "$PKG/.MainActivity" >/dev/null
 sleep 10
-adb -s "$SERIAL" exec-out screencap -p > docs/shots/phone-after-install.png
+adb -s "$SERIAL" exec-out screencap -p > phone-after-install.png
 echo
-echo "✅ Done. Roster screenshot: docs/shots/phone-after-install.png"
+echo "✅ Done. Roster screenshot: phone-after-install.png"
 echo "   Connections copied: Local gateway (9119 dev), Relay GW (9120 dev),"
 echo "   tailnet-gateway (100.64.0.10:9300 — needs Tailscale ON on the phone)."

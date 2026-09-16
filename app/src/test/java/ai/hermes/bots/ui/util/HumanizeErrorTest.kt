@@ -81,4 +81,34 @@ class HumanizeErrorTest {
     assertNull(Humanize.friendlyError(null, "scout"))
     assertNull(Humanize.friendlyError("", "scout"))
   }
+
+  @Test
+  fun `submit failure leads humane with the bot name`() {
+    assertEquals(
+      "Couldn't send that to scout — the gateway rejected the request.",
+      Humanize.friendlyError("submit failed (4007): unknown profile", "scout"),
+    )
+  }
+
+  @Test
+  fun `already humane banners pass through untouched`() {
+    val banner = "Couldn't start a fresh chat — try again."
+    assertEquals(banner, Humanize.friendlyError(banner, "scout"))
+    assertEquals("Couldn't load the conversation.", Humanize.friendlyError("Couldn't load the conversation.", "scout"))
+    assertEquals("Couldn't send that response.", Humanize.friendlyError("Couldn't send that response.", "scout"))
+  }
+
+  @Test
+  fun `server error starting with couldn't still maps humanely`() {
+    // The pass-through is scoped to the app-authored banners — a SERVER error string that
+    // happens to start "couldn't" must still hit the mapping table.
+    assertEquals(
+      "The gateway dropped the connection — retrying.",
+      Humanize.friendlyError("couldn't reach upstream: Connection refused", "scout"),
+    )
+    assertEquals(
+      "The gateway hit an internal error — try again.",
+      Humanize.friendlyError("couldn't complete request: internal error", "scout"),
+    )
+  }
 }

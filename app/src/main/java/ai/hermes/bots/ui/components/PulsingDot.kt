@@ -12,11 +12,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -25,6 +25,11 @@ import androidx.compose.ui.unit.dp
  * Burnt-orange working dot with a gentle pulse ring (audit A3/A29): outer ring scales
  * 1 → 1.6 and fades over 1200 ms — Grok's "presence you can feel", nothing loud.
  * Optional `borderColor` separates the dot from a busy backdrop (avatar edge).
+ *
+ * PERF (QA S1): the animated values are read INSIDE the graphicsLayer lambda — draw phase
+ * only. The outer Box keeps a fixed `dotSize * 2` footprint and the ring keeps a fixed
+ * `dotSize` size, so a frame updates nothing but pixels; reading the scale during
+ * composition into `Modifier.size` re-measured/re-placed the whole row every frame.
  */
 @Composable
 fun PulsingDot(
@@ -34,13 +39,13 @@ fun PulsingDot(
   borderColor: Color? = null,
 ) {
   val transition = rememberInfiniteTransition(label = "working-pulse")
-  val scale by transition.animateFloat(
+  val scale = transition.animateFloat(
     initialValue = 1f,
     targetValue = 1.6f,
     animationSpec = infiniteRepeatable(tween(1200), RepeatMode.Restart),
     label = "pulse-scale",
   )
-  val ringAlpha by transition.animateFloat(
+  val ringAlpha = transition.animateFloat(
     initialValue = 0.5f,
     targetValue = 0f,
     animationSpec = infiniteRepeatable(tween(1200), RepeatMode.Restart),
@@ -52,9 +57,14 @@ fun PulsingDot(
   ) {
     Box(
       Modifier
-        .size(dotSize * scale)
+        .size(dotSize)
+        .graphicsLayer {
+          scaleX = scale.value
+          scaleY = scale.value
+          alpha = ringAlpha.value
+        }
         .clip(CircleShape)
-        .background(color.copy(alpha = ringAlpha)),
+        .background(color),
     )
     Box(
       Modifier

@@ -124,7 +124,13 @@ fun GroupChatScreen(
                 }
             } else {
                 ui.pending.forEach { action ->
-                    PendingActionCard(action, enabled = !ui.busy, onResolve = vm::resolve, onRetry = vm::retry)
+                    PendingActionCard(
+                        action = action,
+                        memberNames = ui.room?.memberNames ?: emptyMap(),
+                        enabled = !ui.busy,
+                        onResolve = vm::resolve,
+                        onRetry = vm::retry,
+                    )
                 }
                 LazyColumn(state = listState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     // Control-plane events (turn.settled, room.activity, …) stay out of the user's
@@ -167,10 +173,14 @@ fun GroupChatScreen(
 @Composable
 private fun PendingActionCard(
     action: ai.hermes.bots.data.GroupPendingAction,
+    memberNames: Map<String, String>,
     enabled: Boolean,
     onResolve: (ai.hermes.bots.data.GroupPendingAction, String) -> Unit,
     onRetry: (ai.hermes.bots.data.GroupPendingAction) -> Unit,
 ) {
+    // Q10 (QA 2026-09-14): resolve the member's display name off the room roster instead of
+    // rendering the raw profile slug; humane fallback when the wire carries no name.
+    val memberName = action.memberId?.let { memberNames[it] }
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -183,13 +193,22 @@ private fun PendingActionCard(
             )
             Text(
                 action.command
-                    ?: (action.memberId?.let { "$it needs your approval" } ?: "A round needs your attention"),
+                    ?: when {
+                        memberName != null -> "$memberName needs your approval"
+                        action.kind == "approval" -> "A member needs your approval"
+                        else -> "A round needs your attention"
+                    },
                 style = MaterialTheme.typography.titleSmall,
             )
             when (action.kind) {
+                // Wire contract (hosted_room_service.py approve_room_task): the choice sent is
+                // exactly "once" or "deny" — the payload's choice set, humane button labels.
                 "approval" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(enabled = enabled, onClick = { onResolve(action, "once") }) { Text("Approve") }
-                    TextButton(enabled = enabled, onClick = { onResolve(action, "deny") }) { Text("Deny") }
+                    action.choices.forEach { choice ->
+                        TextButton(enabled = enabled, onClick = { onResolve(action, choice) }) {
+                            Text(if (choice == "deny") "Deny" else "Approve")
+                        }
+                    }
                 }
                 else -> TextButton(enabled = enabled, onClick = { onRetry(action) }) { Text("Retry") }
             }

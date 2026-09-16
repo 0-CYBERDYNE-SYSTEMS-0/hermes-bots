@@ -2,6 +2,7 @@ package ai.hermes.bots.protocol
 
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.OkHttpClient
@@ -70,6 +72,28 @@ class HermesSocket(
             backoffMs = backoffMinMs
         }
         connect()
+    }
+
+    /**
+     * Production teardown. Identical to [stop], but `ws.cancel()` runs on Dispatchers.IO:
+     * cancel walks OkHttp's TaskQueue shutdown (a global lock) and must never execute on
+     * Main (QA S1 — the ANR trace showed Main's IME dispatch contending on that lock).
+     * Suspend-context call sites MUST prefer this over [stop].
+     */
+    suspend fun stopAsync() {
+        stopped.set(true)
+        val ws = synchronized(lock) {
+            reconnectJob?.cancel()
+            reconnectJob = null
+            reconnectScheduled = false
+            heartbeatJob?.cancel()
+            heartbeatJob = null
+            val old = webSocket
+            webSocket = null
+            old
+        }
+        withContext(Dispatchers.IO) { ws?.cancel() }
+        _state.value = SocketState.Idle
     }
 
     fun stop() {

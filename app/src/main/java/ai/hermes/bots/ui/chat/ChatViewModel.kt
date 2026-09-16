@@ -4,9 +4,11 @@ import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.CanonicalChat
 import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ChatMessagesParser
+import ai.hermes.bots.data.ChatStream
 import ai.hermes.bots.data.ChatUiState
 import ai.hermes.bots.data.ItemKind
 import ai.hermes.bots.data.PendingImage
+import ai.hermes.bots.data.ToolResult
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.protocol.GatewayEvent
 import ai.hermes.bots.protocol.HermesGateway
@@ -105,6 +107,9 @@ class ChatViewModel(
     private var itemCounter = 0
     private var eventJob: Job? = null
     private var reconnectJob: Job? = null
+
+    /** Clarify request_ids already skip-answered from send() — fire at most once each. */
+    private val clarifySkipped = mutableSetOf<String>()
 
     init {
         viewModelScope.launch { open() }
@@ -255,8 +260,9 @@ class ChatViewModel(
                 buildJsonObject { put("session_id", sid); put("profile", botName) },
                 120_000,
             ))
-        } catch (e: Exception) {
-            _ui.update { it.copy(error = "reload failed: ${e.message}") }
+        } catch (_: Exception) {
+            // Q9: humane banner, nothing technical appended (the raw cause stays in logs).
+            _ui.update { it.copy(error = "Couldn't load the conversation.") }
         }
     }
 
@@ -275,10 +281,17 @@ class ChatViewModel(
                 st.copy(items = appendDelta(st.items, str("text") ?: ""))
             }
             Catalog.EVENT_MESSAGE_INTERIM -> _ui.update { st ->
-                st.copy(items = setStreamingText(st.items, str("text") ?: ""))
+                // Q2: seal the interim as its own segment (desktop parity) — never overwrite
+                // the streamed anchor, never duplicate already-streamed text.
+                st.copy(items = ChatStream.sealInterim(
+                    st.items,
+                    str("text") ?: "",
+                    boolField(ev.payload, "already_streamed") == true,
+                ) { "a-${++itemCounter}" })
             }
             Catalog.EVENT_MESSAGE_COMPLETE -> _ui.update { st ->
-                var items = setStreamingText(st.items, str("text") ?: "", finalize = true)
+                // Q2: complete replaces ONLY the newest live anchor; sealed segments survive.
+                var items = ChatStream.completeAnchor(st.items, str("text") ?: "") { "a-${++itemCounter}" }
                 val errText = str("error")
                 val status = str("status")
                 if (errText != null || status == "error") {
@@ -292,7 +305,11 @@ class ChatViewModel(
                     items = st.items + ChatItem(
                         id = "tool-$toolId",
                         kind = ItemKind.TOOL,
-                        text = str("args_text") ?: "",
+                        // Non-verbose sessions omit args_text — fall back to the command
+                        // inside the always-present `args` payload (live QA 2026-09-14).
+                        text = str("args_text")
+                            ?: ToolResult.commandFromArgs(str("name"), ev.payload["args"])
+                            ?: "",
                         streaming = true,
                         toolName = str("name") ?: "tool",
                     ),
@@ -307,6 +324,13 @@ class ChatViewModel(
                             streaming = false,
                             summary = str("summary"),
                             durationS = (ev.payload["duration_s"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
+                            failed = ToolResult.isFailure(
+                                str("name") ?: it[idx].toolName,
+                                ev.payload["result"],
+                            ),
+                            // Q7 follow-up: result_text is verbose-only on the wire; flatten
+                            // the always-present `result` so terminal chips can expand.
+                            outputText = ToolResult.displayText(ev.payload["result"]),
                         )
                     }
                 } else {
@@ -358,13 +382,14 @@ class ChatViewModel(
                 try {
                     gateway?.request(Catalog.METHOD_SESSION_COMPRESS, CanonicalChat.compressParams(sid))
                     reload()
-                } catch (e: Exception) {
-                    _ui.update { it.copy(error = "compress failed: ${e.message}") }
+                } catch (_: Exception) {
+                    _ui.update { it.copy(error = "Couldn't start a fresh chat — try again.") }
                 }
             }
             return
         }
         viewModelScope.launch {
+            skipPendingClarify(sid)
             val bubble = when {
                 pending != null && text.isNotEmpty() -> "$text\n🖼 ${pending.filename}"
                 pending != null -> "🖼 ${pending.filename}"
@@ -402,6 +427,34 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * A typed reply while a clarify card is pending would sit undelivered: prompt.submit
+     * parks the turn server-side (server.py:1276) until clarify.respond or the ~5-min
+     * timeout, so the composer's "reply below to answer" affordance must unblock first.
+     * Desktop parity (store/clarify.ts skipClarifyRequest): an empty answer is the card's
+     * own Skip; clarify.respond tolerates expiry, so racing the timeout is harmless.
+     * Single-flight per request_id; a failed skip never swallows the message.
+     */
+    private suspend fun skipPendingClarify(sid: String) {
+        val card = _ui.value.approval?.takeIf { it.kind == Catalog.EVENT_CLARIFY_REQUEST } ?: return
+        if (!clarifySkipped.add(card.requestId)) return
+        try {
+            gateway?.request(
+                Catalog.METHOD_CLARIFY_RESPOND,
+                buildJsonObject {
+                    put("session_id", sid)
+                    put("request_id", card.requestId)
+                    put("answer", "")
+                },
+            )
+            _ui.update { st ->
+                if (st.approval?.requestId == card.requestId) st.copy(approval = null) else st
+            }
+        } catch (_: Exception) {
+            // Still submit below — the turn also times out server-side on its own.
+        }
+    }
+
     fun respond(choice: String) {
         val sid = runtimeSessionId ?: return
         val card = _ui.value.approval ?: return
@@ -427,8 +480,8 @@ class ChatViewModel(
                     )
                 }
                 _ui.update { it.copy(approval = null, approvalResolved = choice) }
-            } catch (e: Exception) {
-                _ui.update { it.copy(error = "respond failed: ${e.message}") }
+            } catch (_: Exception) {
+                _ui.update { it.copy(error = "Couldn't send that response.") }
             }
         }
     }
@@ -482,16 +535,6 @@ class ChatViewModel(
         if (idx < 0) return items + ChatItem("a-${++itemCounter}", ItemKind.ASSISTANT, delta, streaming = true)
         val cur = items[idx]
         return items.toMutableList().also { it[idx] = cur.copy(text = cur.text + delta) }
-    }
-
-    private fun setStreamingText(items: List<ChatItem>, value: String, finalize: Boolean = false): List<ChatItem> {
-        val idx = items.indexOfLast { it.streaming && it.kind == ItemKind.ASSISTANT }
-        if (idx < 0) {
-            return if (finalize && value.isEmpty()) items
-            else items + ChatItem("a-${++itemCounter}", ItemKind.ASSISTANT, value, streaming = !finalize)
-        }
-        val cur = items[idx]
-        return items.toMutableList().also { it[idx] = cur.copy(text = value, streaming = !finalize) }
     }
 
     private fun boolField(obj: JsonObject, key: String): Boolean? =

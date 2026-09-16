@@ -27,7 +27,17 @@ object CanonicalChat {
         put("text", text)
     }
 
-    /** approval.request / clarify.request / sudo.request / secret.request payload → card. */
+    /**
+     * approval.request / clarify.request / sudo.request / secret.request payload → card.
+     *
+     * Q11 (QA 2026-09-14): choices are NEVER fabricated. Contract: approval.request payloads
+     * always carry choices — the server fills a missing set with [once (+session) (+always)
+     * +deny] before emitting (hermes-agent tui_gateway/server.py:629-640 `_approval_request_payload`,
+     * emit at :688; replay snapshot :671-679) — so a real approval never lands empty. Only a
+     * free-text clarify arrives with no choices, and sending a fabricated "once" as the ANSWER
+     * to an open question is wrong (the desktop shows a typed input there). Empty choices render
+     * a humane "reply in chat" affordance instead (ApprovalCardView / Activity Needs-you).
+     */
     fun parseCard(kind: String, payload: JsonObject?): ApprovalCard? {
         if (payload == null) return null
         val requestId = (payload["request_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
@@ -35,7 +45,7 @@ object CanonicalChat {
             ?: stringField(payload, "question")
         val choices = stringList(payload, "choices")
             ?: stringList(payload, "answers")
-            ?: listOf("once", "deny")
+            ?: emptyList()
         return ApprovalCard(requestId = requestId, kind = kind, command = command, choices = choices)
     }
 

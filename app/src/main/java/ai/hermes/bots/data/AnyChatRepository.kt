@@ -61,6 +61,11 @@ data class AnyChatEntry(
     val toolName: String? = null,
     val summary: String? = null,
     val durationS: Double? = null,
+    // Q12 (QA 2026-09-14): same failure heuristic as the canonical chip — see ToolResult.
+    val failed: Boolean = false,
+    // Q7 follow-up (live QA 2026-09-14): flattened tool output for non-verbose sessions
+    // (the wire omits result_text there) — see ToolResult.displayText.
+    val outputText: String? = null,
 )
 
 data class AnyChatMemberState(
@@ -231,6 +236,7 @@ class AnyChatRepository(
                 toolName = item.toolName,
                 summary = item.summary,
                 durationS = item.durationS,
+                failed = item.failed,
             )
         }
         replaceMemberEntries(rt.room.id, rt.member.key, history)
@@ -327,7 +333,8 @@ class AnyChatRepository(
                         memberKey = rt.member.key,
                         memberName = rt.displayName,
                         gatewayLabel = rt.gatewayLabel,
-                        text = str("args_text").orEmpty(),
+                        text = (str("args_text")
+                            ?: ToolResult.commandFromArgs(str("name"), ev.payload["args"])).orEmpty(),
                         streaming = true,
                         toolName = str("name") ?: "tool",
                     ),
@@ -345,6 +352,10 @@ class AnyChatRepository(
                                 streaming = false,
                                 summary = str("summary"),
                                 durationS = (ev.payload["duration_s"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
+                                // Q12 (QA 2026-09-14): mirror the desktop's failure heuristic.
+                                failed = ToolResult.isFailure(it[idx].toolName, ev.payload["result"]),
+                                // Q7 follow-up: result_text is verbose-only on the wire.
+                                outputText = ToolResult.displayText(ev.payload["result"]),
                             )
                         }
                     }

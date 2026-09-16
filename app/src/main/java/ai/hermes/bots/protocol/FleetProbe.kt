@@ -151,7 +151,7 @@ object FleetProbe {
         } finally {
             runCatching {
                 gateway.stop()
-                socket.stop()
+                socket.stopAsync()
             }
             scope.cancel()
         }

@@ -61,7 +61,7 @@ class RosterRowsTest {
                 entry(bot("gw2")),
                 entry(bot("gw1")),
             ),
-            labels = mapOf("gw1" to "Local dev", "gw2" to "Relay GW", "m1" to "tailnet-gateway"),
+            labels = mapOf("gw1" to "Local dev", "gw2" to "Relay GW", "m1" to "M1-mini-tailnet"),
         )
         // default rows first (name), ordered by gateway label, then scout.
         assertEquals(listOf("gw1", "gw2", "m1"), rows.map { it.primary.bot.connectionId })

@@ -9,6 +9,8 @@ import ai.hermes.bots.data.CronRepository
 import ai.hermes.bots.data.FleetProvisioningCoordinator
 import ai.hermes.bots.data.GatewayManager
 import ai.hermes.bots.data.GroupRepository
+import ai.hermes.bots.data.ModelHealthStore
+import ai.hermes.bots.data.ModelVerifier
 import ai.hermes.bots.data.RelayEngine
 import ai.hermes.bots.data.RosterRepository
 import ai.hermes.bots.data.SettingsRepository
@@ -31,6 +33,9 @@ class AppGraph(private val app: HermesBotsApp) {
     val groups = GroupRepository(gateways)
     val relay = RelayEngine(gateways, scope)
     val settings = SettingsRepository(app)
+    // Model verification (MODEL-UX-PUNCHLIST.md W3): health cache + turn-based verifier.
+    val modelHealth = ModelHealthStore(app)
+    val modelVerifier = ModelVerifier(gateways, modelHealth)
     val provisioning = FleetProvisioningCoordinator(connections)
     val anyChat = AnyChatRepository(app, gateways, roster, scope)
 
@@ -69,25 +74,31 @@ class AppGraph(private val app: HermesBotsApp) {
                                         ?.takeIf { it.isString }?.content.orEmpty()
                                     if (text.isNotBlank()) {
                                         val bot = roster.roster.value.firstOrNull { it.bot.canonicalSessionId == ev.sessionId }
-                                        val label = bot?.bot?.displayName ?: bot?.bot?.name ?: "Hermes Bots"
-                                        // In-app history records every qualifying event, even when
-                                        // the system notification is suppressed or app is foregrounded.
-                                        // Ids let the Notifications list deep-link back to the chat (SV-15).
-                                        settings.appendNotification(
-                                            botLabel = label,
-                                            preview = text,
-                                            sessionId = ev.sessionId ?: "global",
-                                            connectionId = bot?.bot?.connectionId,
-                                            botName = bot?.bot?.name,
-                                        )
-                                        if (app.activitiesInForeground == 0 && settings.notificationsEnabled.value) {
-                                            notifier.notifyBotMessage(
-                                                label,
-                                                text,
-                                                ev.sessionId ?: "global",
-                                                bot?.bot?.connectionId,
-                                                bot?.bot?.name,
+                                        // R4 (MODEL-UX-PUNCHLIST.md): only roster-resolved
+                                        // sessions notify — hidden sessions (the model
+                                        // verifier's test turns, stray tool sessions) used to
+                                        // land here labeled "Hermes Bots" and spammed the feed.
+                                        if (bot != null) {
+                                            val label = bot.bot.displayName ?: bot.bot.name
+                                            // In-app history records every qualifying event, even when
+                                            // the system notification is suppressed or app is foregrounded.
+                                            // Ids let the Notifications list deep-link back to the chat (SV-15).
+                                            settings.appendNotification(
+                                                botLabel = label,
+                                                preview = text,
+                                                sessionId = ev.sessionId ?: "global",
+                                                connectionId = bot.bot.connectionId,
+                                                botName = bot.bot.name,
                                             )
+                                            if (app.activitiesInForeground == 0 && settings.notificationsEnabled.value) {
+                                                notifier.notifyBotMessage(
+                                                    label,
+                                                    text,
+                                                    ev.sessionId ?: "global",
+                                                    bot.bot.connectionId,
+                                                    bot.bot.name,
+                                                )
+                                            }
                                         }
                                     }
                                 }

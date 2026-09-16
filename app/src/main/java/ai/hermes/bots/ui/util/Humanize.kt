@@ -50,11 +50,30 @@ object Humanize {
   /**
    * Maps known gateway/session error strings to humane first lines (A28); returns
    * null when there is no known mapping — the caller may then show the raw text.
+   *
+   * R11 (MODEL-UX-PUNCHLIST.md rev 2): profile-name / duplicate / provider / session-cap
+   * mappings for the bot editor come FIRST so the generic branches below never swallow
+   * them (e.g. "4064" contains no "400", but an "internal error" payload could contain
+   * anything).
    */
   fun friendlyError(raw: String?, botName: String): String? {
     if (raw.isNullOrBlank()) return null
     val lower = raw.lowercase()
     return when {
+      "invalid profile name" in lower ->
+        "Bot names can use lowercase letters, numbers, dashes and underscores."
+      "is reserved" in lower ->
+        "That name is reserved by the gateway — pick another."
+      "already exists" in lower ->
+        "A bot with that name already exists — open it from the roster."
+      "not found" in lower && "profile" in lower ->
+        "That bot is gone — refresh the roster."
+      "unknown provider" in lower ->
+        "This gateway doesn't have that provider."
+      "active session" in lower || "4090" in lower ->
+        "The gateway is at its live-session cap — try again shortly."
+      "internal error" in lower ->
+        "The gateway hit an internal error — try again."
       "valid model" in lower || "invalid model" in lower || "model_id" in lower ->
         "That model ID was rejected — check $botName's model in Edit bot."
       "host_mismatch" in lower || "4403" in lower ->

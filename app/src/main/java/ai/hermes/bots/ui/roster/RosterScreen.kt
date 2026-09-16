@@ -559,7 +559,7 @@ private fun MachineHeader(
     }.joinToString(" · ")
     val summaryColor = when {
         !ready && group.state !is SocketState.Connecting -> MaterialTheme.colorScheme.error
-        group.unreadCount > 0 -> HermesTheme.colors.primary
+        group.unreadCount > 0 -> HermesTheme.colors.attention
         group.activeCount > 0 -> success
         else -> MaterialTheme.colorScheme.onSurface
     }
@@ -745,7 +745,7 @@ private fun MergedBotRowItem(
                         Modifier
                             .size(5.dp)
                             .clip(CircleShape)
-                            .background(HermesTheme.colors.primary)
+                            .background(HermesTheme.colors.attention)
                             .semantics { contentDescription = "Unread" },
                     )
                 }
@@ -779,7 +779,7 @@ private fun MergedBotRowItem(
                 Text(
                     "unread",
                     style = HermesTheme.typography.metadataStrong,
-                    color = HermesTheme.colors.primary,
+                    color = HermesTheme.colors.attention,
                 )
             }
         }

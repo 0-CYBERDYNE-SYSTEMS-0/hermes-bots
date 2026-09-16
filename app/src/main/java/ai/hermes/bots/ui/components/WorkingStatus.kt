@@ -34,7 +34,7 @@ fun WorkingStatus(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    FaceAvatar(botName, 20.dp, real = avatar)
+    FaceAvatar(botName, 20.dp, real = avatar, state = FaceState.Working)
     Text(
       "Working — $status",
       style = MaterialTheme.typography.labelMedium,

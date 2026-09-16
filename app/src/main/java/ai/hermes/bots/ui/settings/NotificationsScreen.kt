@@ -242,7 +242,12 @@ private fun NotificationRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (item.resolved) {
-            FaceAvatar(item.label, 40.dp, real = avatar)
+            FaceAvatar(
+                name = item.label,
+                size = 40.dp,
+                real = avatar,
+                seed = item.entry.botName?.takeIf { it.isNotBlank() } ?: item.label,
+            )
         } else {
             // Muted neutral: session-seeded face at low alpha reads as "unattributed bot event".
             FaceAvatar(

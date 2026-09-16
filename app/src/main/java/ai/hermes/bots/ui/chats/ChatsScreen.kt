@@ -236,7 +236,7 @@ private fun RecentBotRow(
                     Box(
                         Modifier
                             .size(5.dp)
-                            .background(HermesTheme.colors.primary, CircleShape)
+                            .background(HermesTheme.colors.attention, CircleShape)
                             .semantics { contentDescription = "Unread" },
                     )
                 }

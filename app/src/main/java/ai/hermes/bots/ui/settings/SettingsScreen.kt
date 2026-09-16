@@ -54,7 +54,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -146,6 +148,8 @@ fun SettingsScreen(
     val themeMode by vm.themeMode.collectAsState()
     val notificationsEnabled by vm.notificationsEnabled.collectAsState()
     val context = LocalContext.current
+    val stackAppearanceOptions = LocalConfiguration.current.screenWidthDp < 360 ||
+        LocalDensity.current.fontScale > 1.3f
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var importing by remember { mutableStateOf(false) }
@@ -200,23 +204,11 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = themeMode == SettingsRepository.THEME_SYSTEM,
-                        onClick = { vm.setThemeMode(SettingsRepository.THEME_SYSTEM) },
-                        label = { Text("System") },
-                    )
-                    FilterChip(
-                        selected = themeMode == SettingsRepository.THEME_DARK,
-                        onClick = { vm.setThemeMode(SettingsRepository.THEME_DARK) },
-                        label = { Text("Dark") },
-                    )
-                    FilterChip(
-                        selected = themeMode == SettingsRepository.THEME_LIGHT,
-                        onClick = { vm.setThemeMode(SettingsRepository.THEME_LIGHT) },
-                        label = { Text("Light") },
-                    )
-                }
+                AppearanceChips(
+                    themeMode = themeMode,
+                    stacked = stackAppearanceOptions,
+                    onSelect = vm::setThemeMode,
+                )
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text(
                     "Notifications",
@@ -310,6 +302,41 @@ fun SettingsScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun AppearanceChips(
+    themeMode: String,
+    stacked: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    val options = listOf(
+        SettingsRepository.THEME_SYSTEM to "System",
+        SettingsRepository.THEME_DARK to "Dark",
+        SettingsRepository.THEME_LIGHT to "Light",
+    )
+    if (stacked) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            options.forEach { (mode, label) ->
+                FilterChip(
+                    selected = themeMode == mode,
+                    onClick = { onSelect(mode) },
+                    label = { Text(label) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { (mode, label) ->
+                FilterChip(
+                    selected = themeMode == mode,
+                    onClick = { onSelect(mode) },
+                    label = { Text(label) },
+                )
+            }
+        }
     }
 }
 

@@ -25,6 +25,9 @@ data class GroupRoom(
     val name: String,
     val members: List<String>,
     val disbanded: Boolean,
+    // Q10 (QA 2026-09-14): profile id → display name, off the same wire members array
+    // (server stores display_name at create — tui_gateway/hosted_room_service.py:446).
+    val memberNames: Map<String, String> = emptyMap(),
 )
 
 data class GroupLogEntry(
@@ -35,8 +38,15 @@ data class GroupLogEntry(
     val raw: JsonObject,
 )
 
-/** One action waiting on the user, from `groups.state` → `driver_status.pending_actions`
- *  (`tui_gateway/hosted_room_service.py:532-548`, shape `hosted_room_driver.py:392-405`). */
+/**
+ * One action waiting on the user, from `groups.state` → `driver_status.pending_actions`
+ * (`tui_gateway/hosted_room_service.py:532-548`, shape `hosted_room_driver.py:392-405`).
+ *
+ * Q10 (QA 2026-09-14): `choices` mirrors the payload's `approval.choices` filtered to
+ * {once, deny} exactly like the room driver does (hosted_room_driver.py:398-399, default
+ * ["once","deny"] when empty) — the server REJECTS any other value
+ * (`hosted_room_service.py` approve_room_task: "room approval choice must be once or deny").
+ */
 data class GroupPendingAction(
     val kind: String,
     val taskId: String,
@@ -44,6 +54,7 @@ data class GroupPendingAction(
     val executionGeneration: Long,
     val requestId: String?,
     val command: String?,
+    val choices: List<String> = listOf("once", "deny"),
 )
 
 data class GroupRoomState(
@@ -236,6 +247,11 @@ class GroupRepository(private val manager: GatewayManager) {
             val kind = str(o, "kind") ?: return null
             val taskId = str(o, "task_id") ?: return null
             val approval = o["approval"] as? JsonObject
+            // Q10: mirror the driver's own sanitize — keep only once/deny, default both.
+            val wireChoices = (approval?.get("choices") as? JsonArray)
+                ?.mapNotNull { c -> (c as? JsonPrimitive)?.takeIf { it.isString }?.content }
+                ?.filter { it in setOf("once", "deny") }
+                .orEmpty()
             return GroupPendingAction(
                 kind = kind,
                 taskId = taskId,
@@ -243,24 +259,36 @@ class GroupRepository(private val manager: GatewayManager) {
                 executionGeneration = (o["execution_generation"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
                 requestId = str(o, "request_id") ?: str(approval, "request_id"),
                 command = str(approval, "command"),
+                choices = wireChoices.ifEmpty { listOf("once", "deny") },
             )
         }
 
         internal fun parseRoomPublic(connectionId: String, element: JsonElement): GroupRoom? {
             val o = element as? JsonObject ?: return null
             val roomId = str(o, "room_id") ?: str(o, "id") ?: return null
+            // Q10: collect display_name per profile off the same members array.
+            val rawMembers = (o["members"] as? JsonArray).orEmpty()
+            val names = rawMembers
+                .filterIsInstance<JsonObject>()
+                .mapNotNull { m ->
+                    val profile = str(m, "profile") ?: str(m, "member_id") ?: return@mapNotNull null
+                    val name = str(m, "display_name") ?: return@mapNotNull null
+                    profile to name
+                }
+                .toMap()
             return GroupRoom(
                 connectionId = connectionId,
                 roomId = roomId,
                 name = str(o, "name").orEmpty().ifBlank { roomId },
-                members = (o["members"] as? JsonArray)?.mapNotNull { m ->
+                members = rawMembers.mapNotNull { m ->
                     when (m) {
                         is JsonPrimitive -> if (m.isString) m.content else null
                         is JsonObject -> str(m, "profile") ?: str(m, "member_id")
                         else -> null
                     }
-                }.orEmpty(),
+                },
                 disbanded = (o["disbanded_at"] as? JsonPrimitive)?.let { it !is JsonNull } == true,
+                memberNames = names,
             )
         }
 

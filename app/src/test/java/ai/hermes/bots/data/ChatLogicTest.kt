@@ -61,15 +61,18 @@ class ChatLogicTest {
     }
 
     @Test
-    fun `card without request id is null and defaults choices`() {
+    fun `card without request id is null and choices are never fabricated`() {
         assertNull(CanonicalChat.parseCard(Catalog.EVENT_APPROVAL_REQUEST, null))
         assertNull(CanonicalChat.parseCard(Catalog.EVENT_APPROVAL_REQUEST, json.parseToJsonElement("{}").jsonObject))
+        // Q11 (QA 2026-09-14): a payload with no choices (free-text clarify) keeps empty
+        // choices — the UI shows a reply affordance instead of sending a made-up answer.
         val card = CanonicalChat.parseCard(
-            Catalog.EVENT_APPROVAL_REQUEST,
-            json.parseToJsonElement("""{"request_id":"r3"}""").jsonObject,
+            Catalog.EVENT_CLARIFY_REQUEST,
+            json.parseToJsonElement("""{"request_id":"r3","question":"What next?"}""").jsonObject,
         )
         assertNotNull(card)
-        assertEquals(listOf("once", "deny"), card!!.choices)
+        assertTrue(card!!.choices.isEmpty())
+        assertEquals("What next?", card.command)
     }
 
     @Test

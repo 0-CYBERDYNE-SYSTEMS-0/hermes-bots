@@ -1,17 +1,18 @@
 package ai.hermes.bots.ui.editor
 
 import ai.hermes.bots.data.AvatarImage
+import ai.hermes.bots.data.HealthEntry
+import ai.hermes.bots.data.HealthState
+import ai.hermes.bots.data.ModelCatalog
+import ai.hermes.bots.data.ProviderOption
 import ai.hermes.bots.ui.components.FaceAvatar
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,24 +21,27 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,7 +49,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -61,13 +67,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -88,9 +96,12 @@ fun BotEditorScreen(
     val context = LocalContext.current
     val ui by vm.ui.collectAsState()
     val connections by vm.connections.collectAsState()
+    val health by vm.health.collectAsState()
+    val healthMap by vm.healthMap.collectAsState()
+    val rosterRows by vm.rosterRows.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    var modelMenu by remember { mutableStateOf(false) }
+    var keyDialogFor by remember { mutableStateOf<ProviderOption?>(null) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -103,7 +114,15 @@ fun BotEditorScreen(
         }
     }
 
-    LaunchedEffect(ui.saved) { if (ui.saved) onBack() }
+    // D: no-pin saves pop immediately (as before); pin saves stay in the saved phase and
+    // auto-pop shortly after a ✓ Working verdict so the user sees it land.
+    LaunchedEffect(ui.saved) { if (ui.saved && !ui.savedPhase) onBack() }
+    LaunchedEffect(ui.savedPhase, health?.state) {
+        if (ui.savedPhase && health?.state == HealthState.WORKING) {
+            delay(1_500)
+            onBack()
+        }
+    }
     LaunchedEffect(ui.message) { ui.message?.let { snackbar.showSnackbar(it) } }
     LaunchedEffect(ui.error) {
         ui.error?.let { raw ->
@@ -117,7 +136,15 @@ fun BotEditorScreen(
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-                title = { Text(if (ui.isEdit) "Edit bot" else "New bot") },
+                title = {
+                    Text(
+                        when {
+                            ui.savedPhase -> "Saved ✓"
+                            ui.isEdit -> "Edit bot"
+                            else -> "New bot"
+                        },
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
@@ -135,8 +162,18 @@ fun BotEditorScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Spacer(Modifier.weight(1f))
-                    Button(onClick = { vm.save() }, enabled = !ui.saving && (ui.isEdit || ui.name.isNotBlank())) {
-                        Text(if (ui.saving) "Saving…" else "Save")
+                    val doneMode = ui.savedPhase && !ui.pinChanged
+                    Button(
+                        onClick = { if (doneMode) onBack() else vm.save() },
+                        enabled = doneMode || (!ui.saving && (ui.isEdit || (ui.name.isNotBlank() && ui.nameProblem == null))),
+                    ) {
+                        Text(
+                            when {
+                                ui.saving -> "Saving…"
+                                doneMode -> "Done"
+                                else -> "Save"
+                            },
+                        )
                     }
                 }
             }
@@ -175,27 +212,33 @@ fun BotEditorScreen(
             if (!ui.isEdit) {
                 OutlinedTextField(
                     value = ui.name,
-                    onValueChange = { n -> vm.set { it.copy(name = n) } },
+                    onValueChange = { n -> vm.setName(n) },
                     label = { Text("Name") },
+                    isError = ui.nameProblem != null,
+                    supportingText = {
+                        val problem = ui.nameProblem
+                        when {
+                            problem != null -> Text(
+                                problem,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            ui.nameSlug.isNotBlank() -> Text(
+                                "Will be created as \"${ui.nameSlug}\"",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
-                OutlinedTextField(
-                    value = ui.cloneFrom,
-                    onValueChange = { n -> vm.set { it.copy(cloneFrom = n) } },
-                    label = { Text("Clone from (optional profile name)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-            }
-            OutlinedTextField(
-                value = ui.description,
-                onValueChange = { n -> vm.set { it.copy(description = n) } },
-                label = { Text("Description") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-            )
-            if (!ui.isEdit) {
+                StartFromDropdown(
+                    startFrom = ui.startFrom,
+                    donorNames = rosterRows
+                        .filter { it.bot.connectionId == ui.createOnConnectionId }
+                        .map { it.bot.displayName?.takeIf { dn -> dn.isNotBlank() } ?: it.bot.name },
+                ) { chosen -> vm.startFrom(chosen) }
                 Column {
                     Text("Create on", style = MaterialTheme.typography.labelMedium)
                     Row(
@@ -205,108 +248,38 @@ fun BotEditorScreen(
                         connections.forEach { c ->
                             FilterChip(
                                 selected = c.id == ui.createOnConnectionId,
-                                onClick = { vm.set { it.copy(createOnConnectionId = c.id) } },
+                                onClick = { vm.setCreateOn(c.id) },
                                 label = { Text(c.label) },
                             )
                         }
                     }
                 }
             }
-            var advanced by remember { mutableStateOf(false) }
-            // Models are fetched the moment the section is opened — no manual "load" step.
-            LaunchedEffect(advanced) {
-                if (advanced && ui.modelOptions.isEmpty()) vm.loadModelOptions()
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .clickable { advanced = !advanced }
-                    .padding(vertical = 10.dp, horizontal = 4.dp),
-            ) {
-                Text(
-                    if (ui.provider.isBlank() && ui.model.isBlank()) {
-                        "Model — tap Advanced to set"
-                    } else {
-                        ai.hermes.bots.ui.util.Humanize.model("${ui.provider}/${ui.model}")
-                            ?: "${ui.provider}/${ui.model}".ifBlank { "Model" }
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    "Advanced",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Icon(
-                    if (advanced) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            androidx.compose.animation.AnimatedVisibility(visible = advanced) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = ui.provider,
-                            onValueChange = { n -> vm.set { it.copy(provider = n) } },
-                            label = { Text("Provider") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                        )
-                        OutlinedTextField(
-                            value = ui.model,
-                            onValueChange = { n -> vm.set { it.copy(model = n) } },
-                            label = { Text("Model") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                        )
-                    }
-                    when {
-                        ui.modelOptionsLoading -> {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Text(
-                                    "Fetching models…",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                        ui.modelOptions.isNotEmpty() -> {
-                            ExposedDropdownMenuBox(expanded = modelMenu, onExpandedChange = { modelMenu = it }) {
-                                OutlinedTextField(
-                                    value = "${ui.provider}/${ui.model}".ifBlank { "pick a model" },
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Model — ${ui.modelOptions.size} available") },
-                                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenu) },
-                                )
-                                ExposedDropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
-                                    ui.modelOptions.take(50).forEach { opt ->
-                                        DropdownMenuItem(
-                                            text = { Text("${opt.provider} / ${opt.model}") },
-                                            onClick = {
-                                                vm.set { it.copy(provider = opt.provider, model = opt.model) }
-                                                modelMenu = false
-                                            },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        else -> {
-                            OutlinedButton(onClick = { vm.loadModelOptions() }) { Text("Browse models") }
-                        }
-                    }
-                }
-            }
+            ModelSection(
+                ui = ui,
+                health = health,
+                healthMap = healthMap,
+                rosterRows = rosterRows,
+                onProvider = { vm.setProvider(it) },
+                onModel = { m -> vm.set { st -> st.copy(model = m) } },
+                onAdoptPin = { p, m -> vm.adoptPinFrom(p, m) },
+                onManualEntry = { vm.setManualEntry(true) },
+                onBackToList = { vm.setManualEntry(false) },
+                onProviderText = { n -> vm.set { it.copy(provider = n) } },
+                onModelText = { n -> vm.set { it.copy(model = n) } },
+                onRefreshCatalog = { vm.loadOptions(refresh = true) },
+                onRetryOptions = { vm.loadOptions() },
+                onResolvePinUnlisted = { keep -> vm.resolvePinUnlisted(keep) },
+                onAddKey = { keyDialogFor = it },
+                onRetest = { vm.retest() },
+            )
+            OutlinedTextField(
+                value = ui.description,
+                onValueChange = { n -> vm.set { it.copy(description = n) } },
+                label = { Text("Description") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+            )
             OutlinedTextField(
                 value = ui.soul,
                 onValueChange = { n -> vm.set { it.copy(soul = n) } },
@@ -338,68 +311,606 @@ fun BotEditorScreen(
                     },
                 )
             }
-            if (ui.skills.isNotEmpty()) {
-                val onCount = ui.skills.count { it.enabled }
+            ChipGroupSection("Skills", ui.skills.map { ChipToggle(it.name, it.enabled) }) { name, on ->
+                vm.toggleSkill(name, on)
+            }
+            ChipGroupSection("Toolsets", ui.toolsets.map { ChipToggle(it.name, it.enabled) }) { name, on ->
+                vm.toggleToolset(name, on)
+            }
+            ChipGroupSection("MCP servers", ui.mcpServers.map { ChipToggle(it.name, it.enabled) }) { name, on ->
+                vm.toggleMcpServer(name, on)
+            }
+        }
+    }
+
+    keyDialogFor?.let { provider ->
+        AddKeyDialog(
+            providerName = ModelCatalog.displayName(provider),
+            onDismiss = { keyDialogFor = null },
+            onSave = { key ->
+                vm.saveKey(provider.slug, key)
+                keyDialogFor = null
+            },
+        )
+    }
+}
+
+private data class ChipToggle(val name: String, val enabled: Boolean)
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ChipGroupSection(title: String, rows: List<ChipToggle>, onToggle: (String, Boolean) -> Unit) {
+    if (rows.isEmpty()) return
+    val onCount = rows.count { it.enabled }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.labelMedium)
+        Text(
+            "$onCount of ${rows.size} on",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        rows.forEach { row ->
+            FilterChip(
+                selected = row.enabled,
+                onClick = { onToggle(row.name, !row.enabled) },
+                label = { Text(row.name) },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StartFromDropdown(startFrom: String?, donorNames: List<String>, onPick: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = startFrom ?: "Fresh bot",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Start from") },
+            supportingText = {
+                Text(
+                    "Copy an existing bot's setup, or start fresh",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("Fresh bot") }, onClick = { onPick(""); expanded = false })
+            donorNames.forEach { name ->
+                DropdownMenuItem(text = { Text(name) }, onClick = { onPick(name); expanded = false })
+            }
+        }
+    }
+}
+
+/**
+ * P4: the model section is PRIMARY — always visible, no "Advanced" disclosure. Provider
+ * dropdown (authenticated first) → model dropdown scoped to the provider with search →
+ * inline key paste / warnings / verification row.
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ModelSection(
+    ui: EditorUiState,
+    health: HealthEntry?,
+    healthMap: Map<String, HealthEntry>,
+    rosterRows: List<ai.hermes.bots.data.RosterEntry>,
+    onProvider: (String) -> Unit,
+    onModel: (String) -> Unit,
+    onAdoptPin: (String, String) -> Unit,
+    onManualEntry: () -> Unit,
+    onBackToList: () -> Unit,
+    onProviderText: (String) -> Unit,
+    onModelText: (String) -> Unit,
+    onRefreshCatalog: () -> Unit,
+    onRetryOptions: () -> Unit,
+    onResolvePinUnlisted: (Boolean) -> Unit,
+    onAddKey: (ProviderOption) -> Unit,
+    onRetest: () -> Unit,
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val summary = ai.hermes.bots.ui.util.Humanize.model("${ui.provider}/${ui.model}")
+            Text("Model", style = MaterialTheme.typography.titleSmall)
+            Text(
+                summary ?: "Pick the model this bot runs on",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            ui.optionsError?.let { err ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Skills", style = MaterialTheme.typography.labelMedium)
                     Text(
-                        "$onCount of ${ui.skills.size} on",
-                        style = MaterialTheme.typography.labelSmall,
+                        err,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onRetryOptions) { Text("Retry") }
+                }
+            }
+            if (ui.optionsLoading) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(
+                        "Loading providers…",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ui.skills.forEach { skill ->
-                        FilterChip(
-                            selected = skill.enabled,
-                            onClick = { vm.toggleSkill(skill.name, !skill.enabled) },
-                            label = { Text(skill.name) },
+            }
+
+            // A4: the loaded pin isn't offered on this gateway — keep the raw value or clear it.
+            if (ui.pinUnlisted) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "Saved pin isn't offered by this gateway",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                    Text(
+                        "The bot's saved provider \"${ui.pinProvider.orEmpty()}\" isn't in this gateway's list." +
+                            " Keep it if you know it works, or clear it and pick from the list.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { onResolvePinUnlisted(true) }) { Text("Keep") }
+                        TextButton(onClick = { onResolvePinUnlisted(false) }) { Text("Clear") }
+                    }
+                }
+            }
+
+            val models = ModelCatalog.modelsFor(ui.providers, ui.provider)
+            if (ui.manualEntry) {
+                // Desktop-parity escape hatch: free-text provider/model.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = ui.provider,
+                        onValueChange = onProviderText,
+                        label = { Text("Provider") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = ui.model,
+                        onValueChange = onModelText,
+                        label = { Text("Model") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                }
+                TextButton(onClick = onBackToList) { Text("Back to list") }
+            } else {
+                ProviderDropdown(
+                    selectedSlug = ui.provider,
+                    providers = ui.providers,
+                    connectionId = ui.createOnConnectionId,
+                    healthMap = healthMap,
+                    pinWorking = health?.state == HealthState.WORKING,
+                    onSelect = onProvider,
+                    onManual = onManualEntry,
+                )
+                // A1: adopt another bot's proven pin in one tap.
+                val exclude = when {
+                    ui.isEdit -> ui.name
+                    ui.savedPhase -> ui.nameSlug
+                    else -> null
+                }
+                val candidates = EditorModel.sameAsCandidates(rosterRows, ui.createOnConnectionId, exclude)
+                if (candidates.isNotEmpty()) {
+                    Text("Copy a working setup from another bot", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        candidates.forEach { (name, p, m) ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { onAdoptPin(p, m) },
+                                label = { Text("Same as $name") },
+                            )
+                        }
+                    }
+                }
+                ModelDropdown(
+                    enabled = ui.provider.isNotBlank(),
+                    models = models,
+                    selectedModel = ui.model,
+                    connectionId = ui.createOnConnectionId,
+                    providerSlug = ui.provider,
+                    healthMap = healthMap,
+                    unlistedProvider = ui.manualEntry ||
+                        ui.providers.firstOrNull { it.slug == ui.provider }?.models.isNullOrEmpty(),
+                    onSelect = onModel,
+                )
+                // R8: an authenticated provider with no listed models is real (openrouter) —
+                // offer a forced server-side catalog rebuild.
+                val providerRow = ui.providers.firstOrNull { it.slug == ui.provider }
+                if (ui.provider.isNotBlank() && models.isEmpty() && providerRow?.authenticated == true &&
+                    !ui.optionsLoading && ui.optionsError == null
+                ) {
+                    OutlinedButton(onClick = onRefreshCatalog) { Text("No models listed — Refresh catalog") }
+                }
+            }
+
+            // A2: bare custom:* model ids 400 at turn time on vendor-prefixed endpoints.
+            if (!ui.manualEntry && ModelCatalog.needsVendorPrefixWarning(ui.provider, ui.model)) {
+                Text(
+                    "This endpoint expects vendor-prefixed ids — e.g. vendor/model",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+
+            // P7: inline key paste for unauthenticated api-key providers; guidance otherwise.
+            val selected = ui.providers.firstOrNull { it.slug == ui.provider }
+            if (selected != null && !selected.authenticated) {
+                when {
+                    selected.slug.trim().lowercase() == "custom" -> HelperLine(
+                        "Custom providers are keyed on the gateway itself — managed by whoever runs it",
+                    )
+                    selected.slug.trim().lowercase().startsWith("custom") -> HelperLine(
+                        "This gateway's custom provider is keyed on the gateway host",
+                    )
+                    selected.authType == "api_key" && !selected.keyEnv.isNullOrBlank() -> {
+                        HelperLine("No key on the gateway yet")
+                        OutlinedButton(onClick = { onAddKey(selected) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text("Add key")
+                        }
+                    }
+                    else -> HelperLine(
+                        "Sign-in provider — connect it once on the gateway, then it shows ready here",
+                    )
+                }
+            }
+
+            HealthRow(
+                entry = health,
+                hasSavedPin = ui.pinProvider != null && ui.pinModel != null,
+                candidatePin = !ui.isEdit && ui.provider.isNotBlank() && ui.model.isNotBlank(),
+                onRetest = onRetest,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HelperLine(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProviderDropdown(
+    selectedSlug: String,
+    providers: List<ProviderOption>,
+    connectionId: String,
+    healthMap: Map<String, HealthEntry>,
+    pinWorking: Boolean,
+    onSelect: (String) -> Unit,
+    onManual: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var showMore by remember { mutableStateOf(false) }
+    // Probe-backed grouping: only rows that verifiably work lead the list (the gateway's
+    // authenticated flag lies — live probes found "no credentials" / "out of quota" /
+    // "model not supported" providers wearing ✓). Everything else hides behind an expander.
+    val (ready, more) = remember(providers, healthMap, connectionId) {
+      EditorModel.splitProviders(providers, healthMap, connectionId)
+    }
+    val ordered = if (showMore) ready + more else ready
+    val selected = providers.firstOrNull { it.slug == selectedSlug }
+    val label = when {
+        selected != null -> ModelCatalog.displayName(selected) + if (EditorModel.showNoKeyBadge(selected, pinWorking)) " · No key" else ""
+        selectedSlug.isNotBlank() -> selectedSlug
+        else -> "Choose a provider"
+    }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = label,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Provider") },
+            supportingText = if (selected != null && EditorModel.showGatewayWarning(selected)) {
+                {
+                    // A2: gateway notice as the supporting line once selected — only when it
+                    // reads as humane copy (setup commands leak through otherwise; the
+                    // key/sign-in guidance block under the field covers those).
+                    Text(
+                        selected.warning.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            } else {
+                null
+            },
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (ordered.isEmpty()) {
+                DropdownMenuItem(text = { Text("Checking what works on this gateway…") }, enabled = false, onClick = {})
+            }
+            ordered.forEach { p ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    ModelCatalog.displayName(p) + if (EditorModel.showNoKeyBadge(p, pinWorking = false)) " · No key" else "",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (p.slug == selectedSlug) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                            }
+                            val hint = EditorModel.providerHealthHint(healthMap, connectionId, p.slug)
+                            val probe = EditorModel.providerProbe(healthMap, connectionId, p.slug)
+                            val sub = buildList {
+                                if (p.isCurrent) add("Current on gateway")
+                                when (probe?.state) {
+                                    HealthState.TESTING -> add("Checking…")
+                                    else -> hint?.let { add(it) }
+                                }
+                            }
+                            if (sub.isNotEmpty()) {
+                                Text(
+                                    sub.joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    },
+                    leadingIcon = if (p.authenticated) {
+                        { Icon(Icons.Filled.Check, contentDescription = "Key on gateway", tint = MaterialTheme.colorScheme.primary) }
+                    } else {
+                        null
+                    },
+                    trailingIcon = if (EditorModel.showGatewayWarning(p)) {
+                        { Icon(Icons.Filled.Warning, contentDescription = "Warning", tint = MaterialTheme.colorScheme.secondary) }
+                    } else {
+                        null
+                    },
+                    onClick = { onSelect(p.slug); expanded = false },
+                )
+            }
+            if (more.isNotEmpty()) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (showMore) "Hide the other ${more.size} providers" else "Show ${more.size} more providers (need setup)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    onClick = { showMore = !showMore },
+                )
+                if (showMore) {
+                    more.forEach { p ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(ModelCatalog.displayName(p), style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        EditorModel.moreReason(p, healthMap, connectionId),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            onClick = { onSelect(p.slug); expanded = false },
                         )
                     }
                 }
             }
-            if (ui.toolsets.isNotEmpty()) {
-                val onCount = ui.toolsets.count { it.enabled }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Toolsets", style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        "$onCount of ${ui.toolsets.size} on",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ui.toolsets.forEach { toolset ->
-                        FilterChip(
-                            selected = toolset.enabled,
-                            onClick = { vm.toggleToolset(toolset.name, !toolset.enabled) },
-                            label = { Text(toolset.name) },
+            HorizontalDivider()
+            DropdownMenuItem(text = { Text("Enter manually…") }, onClick = { onManual(); expanded = false })
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelDropdown(
+    enabled: Boolean,
+    models: List<String>,
+    selectedModel: String,
+    connectionId: String,
+    providerSlug: String,
+    healthMap: Map<String, HealthEntry>,
+    unlistedProvider: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    ExposedDropdownMenuBox(expanded = expanded && enabled, onExpandedChange = { if (enabled) expanded = it }) {
+        OutlinedTextField(
+            value = selectedModel.ifBlank { "Pick a model" },
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text("Model") },
+            supportingText = {
+                // An unlisted (e.g. bare custom) provider legitimately has no catalog rows —
+                // the entered id is still used verbatim, so say that instead of a bare "none".
+                Text(
+                    when {
+                        models.isNotEmpty() -> "${models.size} models"
+                        unlistedProvider -> "Not in the gateway's catalog — kept as entered"
+                        else -> "No models listed"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && enabled,
+            onDismissRequest = { expanded = false; query = "" },
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search models") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+            val filtered = if (query.isBlank()) models else models.filter { it.contains(query.trim(), ignoreCase = true) }
+            if (models.isEmpty()) {
+                DropdownMenuItem(text = { Text("No models listed") }, enabled = false, onClick = {})
+            } else {
+                // Column+scroll, not LazyColumn: the menu popup measures content intrinsically
+                // and lazy lists (SubcomposeLayout) crash on that query. Rows are cheap texts;
+                // cap the rendered window and ask for a search beyond it.
+                val shown = filtered.take(MAX_RENDERED_MODELS)
+                Column(
+                    Modifier
+                        .height((shown.size.coerceAtMost(6) * 48).dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    shown.forEach { m ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(m, style = MaterialTheme.typography.bodyLarge)
+                                    EditorModel.modelHealthHint(healthMap, connectionId, providerSlug, m)?.let { hint ->
+                                        Text(
+                                            hint,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            },
+                            onClick = { onSelect(m); expanded = false; query = "" },
                         )
                     }
-                }
-            }
-            if (ui.mcpServers.isNotEmpty()) {
-                val onCount = ui.mcpServers.count { it.enabled }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("MCP servers", style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        "$onCount of ${ui.mcpServers.size} on",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ui.mcpServers.forEach { server ->
-                        FilterChip(
-                            selected = server.enabled,
-                            onClick = { vm.toggleMcpServer(server.name, !server.enabled) },
-                            label = { Text(server.name) },
+                    if (filtered.size > MAX_RENDERED_MODELS) {
+                        DropdownMenuItem(
+                            text = { Text("Type to search ${filtered.size} models") },
+                            enabled = false,
+                            onClick = {},
                         )
                     }
                 }
             }
         }
     }
+}
+
+private const val MAX_RENDERED_MODELS = 100
+
+/** P9/A5: the verification verdict row under the model dropdown. */
+@Composable
+private fun HealthRow(
+    entry: HealthEntry?,
+    hasSavedPin: Boolean,
+    candidatePin: Boolean,
+    onRetest: () -> Unit,
+) {
+    val state = entry?.state
+    val showRow = entry != null || hasSavedPin || candidatePin
+    if (!showRow) return
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.heightIn(min = 32.dp),
+    ) {
+        when (state) {
+            HealthState.TESTING -> {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text("Testing model…", style = MaterialTheme.typography.bodySmall)
+            }
+            HealthState.WORKING -> {
+                Text(
+                    "✓ Working · ${EditorModel.latencySeconds(entry?.latencyMs ?: 0L)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            HealthState.FAILED -> {
+                Text(
+                    entry?.reason ?: "The model did not respond",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            HealthState.UNTESTED, null -> {
+                when {
+                    hasSavedPin -> {
+                        Text(
+                            entry?.reason ?: "Not tested yet",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(onClick = onRetest, modifier = Modifier.heightIn(min = 48.dp)) { Text("Retest") }
+                    }
+                    candidatePin -> Text(
+                        "Save to test this model",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddKeyDialog(providerName: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var key by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add key for $providerName") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it },
+                    label = { Text("API key") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Stored on the gateway, never in the app",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (key.isNotBlank()) onSave(key.trim()) },
+                enabled = key.isNotBlank(),
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
+        },
+    )
 }
 
 private fun loadAvatarFromUri(context: android.content.Context, uri: android.net.Uri): AvatarImage? = try {

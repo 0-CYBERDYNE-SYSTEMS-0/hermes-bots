@@ -66,4 +66,22 @@ class HumanizeTest {
     assertEquals("every 30m", Humanize.cron("every 30m"))
     assertEquals("0 9", Humanize.cron("0 9"))
   }
+
+  @Test
+  fun `tool labels humanize known slugs`() {
+    // Q8 (QA 2026-09-14): chip titles / Running lines never show raw snake_case.
+    assertEquals("Terminal", Humanize.toolLabel("terminal"))
+    assertEquals("Read file", Humanize.toolLabel("read_file"))
+    assertEquals("Message agent", Humanize.toolLabel("message_agent"))
+    assertEquals("Web search", Humanize.toolLabel("web_search"))
+    assertEquals("Analyze image", Humanize.toolLabel("vision_analyze"))
+  }
+
+  @Test
+  fun `tool labels fall back to title case and handle blanks`() {
+    assertEquals("Deep Research", Humanize.toolLabel("deep_research"))
+    assertEquals("Tool", Humanize.toolLabel("tool"))
+    assertEquals("Tool", Humanize.toolLabel(""))
+    assertEquals("Tool", Humanize.toolLabel(null))
+  }
 }

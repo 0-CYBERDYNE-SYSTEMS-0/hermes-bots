@@ -52,6 +52,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -83,21 +84,36 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.viewModelFactory
 import android.util.Log
+import android.annotation.SuppressLint
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+
+/**
+ * D1DBG scroll diagnostics: zero cost unless enabled via
+ * `adb shell setprop log.tag.D1DBG DEBUG`. Inline + lambda keeps string building lazy;
+ * one suppression for lint's isLoggable/Log.d tag false positive (identical literals).
+ */
+@SuppressLint("LogTagMismatch")
+private inline fun d1dbg(message: () -> String) {
+    if (Log.isLoggable("D1DBG", Log.DEBUG)) Log.d("D1DBG", message())
+}
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -179,12 +195,13 @@ fun ChatScreen(
                 scrolledUp -> false
                 else -> wasAtBottom
             }
-            Log.d(
-                "D1DBG",
+            // PERF (QA S1): this runs per scroll frame — never build the log string unless
+            // the tag is enabled (`adb shell setprop log.tag.D1DBG DEBUG`).
+            d1dbg {
                 "collect snap=$snap atEndNow=$atEndNow scrolledUp=$scrolledUp " +
                     "canFwd=${listState.canScrollForward} last=${last?.let { "${it.index}:${it.offset}+${it.size} vs ve=${info.viewportEndOffset}" }} " +
-                    "total=${info.totalItemsCount} -> wasAtBottom=$wasAtBottom",
-            )
+                    "total=${info.totalItemsCount} -> wasAtBottom=$wasAtBottom"
+            }
             prevScrollPos = snap
         }
     }
@@ -200,12 +217,19 @@ fun ChatScreen(
         }
     }
     LaunchedEffect(wasAtBottom) { if (wasAtBottom) userScrolledUp = false }
-    LaunchedEffect(rows.size, bubbleRows.size, showTyping, ui.statusText) {
-        Log.d(
-            "D1DBG",
-            "effect rows=${rows.size} bubble=${bubbleRows.size} typing=$showTyping " +
-                "status=${ui.statusText != null} lastIndex=$lastIndex wasAtBottom=$wasAtBottom jumped=$jumpedToLatest",
-        )
+    // PERF (QA S1) D1 autoscroll, split in two: content growth (rows / typing bubble) keeps
+    // the animated dock exactly as before; status pushes re-pin INSTANTLY instead. The old
+    // combined effect re-ran the animated dock on every status push — mid-turn that meant an
+    // animation per push re-dispatching layout (ANR fuel). The status strip's enter/exit is
+    // still honored: one instant dock when it flips, plus a settle re-dock after its 200 ms
+    // animation finishes, so the tail row's bottom edge stays visible (D1 / D1-tall) and the
+    // reader-gate (wasAtBottom) is checked exactly as before — scrolled-up readers are never
+    // re-anchored.
+    LaunchedEffect(rows.size, bubbleRows.size, showTyping) {
+        d1dbg {
+            "grow rows=${rows.size} bubble=${bubbleRows.size} typing=$showTyping " +
+                "lastIndex=$lastIndex wasAtBottom=$wasAtBottom jumped=$jumpedToLatest"
+        }
         if (rows.isEmpty() && !showTyping) return@LaunchedEffect
         if (!jumpedToLatest) {
             jumpedToLatest = true
@@ -214,6 +238,15 @@ fun ChatScreen(
         } else if (wasAtBottom) {
             listState.dockToLatest(lastIndex, animated = true)
         }
+    }
+    LaunchedEffect(ui.statusText) {
+        if (rows.isEmpty() && !showTyping) return@LaunchedEffect
+        if (!jumpedToLatest || !wasAtBottom) return@LaunchedEffect
+        d1dbg { "status=${ui.statusText != null} lastIndex=$lastIndex wasAtBottom=$wasAtBottom" }
+        listState.dockToLatest(lastIndex, animated = false)
+        delay(240) // strip expand/collapse runs 200 ms; re-check once it has settled
+        if (!wasAtBottom) return@LaunchedEffect
+        listState.dockToLatest(lastIndex, animated = false)
     }
     val showJump = userScrolledUp && !wasAtBottom && (rows.isNotEmpty() || showTyping)
 
@@ -539,7 +572,9 @@ private fun TimeSeparatorRow(label: String) {
 @Composable
 private fun BlinkingCaret() {
     val transition = rememberInfiniteTransition(label = "caret")
-    val alpha by transition.animateFloat(
+    // PERF (QA S1): alpha is read inside the graphicsLayer lambda (draw phase only) — the
+    // old composition read rebuilt the brush every frame.
+    val alpha = transition.animateFloat(
         initialValue = 1f,
         targetValue = 0.1f,
         animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
@@ -549,14 +584,19 @@ private fun BlinkingCaret() {
         Modifier
             .padding(start = 2.dp, bottom = 3.dp)
             .size(width = 2.dp, height = 18.dp)
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)),
+            .graphicsLayer { this.alpha = alpha.value }
+            .background(MaterialTheme.colorScheme.onSurface),
     )
 }
 
 @Composable
 private fun ToolChip(item: ChatItem) {
     var open by remember(item.id) { mutableStateOf(false) }
-    val expandable = item.summary != null || item.text.isNotBlank()
+    // Q7 (QA 2026-09-14): "Show all" unclamps the summary + output inside the chip.
+    var showAll by remember(item.id) { mutableStateOf(false) }
+    val expandable = item.summary != null || item.text.isNotBlank() || item.outputText != null
+    // Q8: humane label on the chip face; the raw name stays in the expandable detail.
+    val toolLabel = ai.hermes.bots.ui.util.Humanize.toolLabel(item.toolName)
     // Soft entrance for newly appearing chips (A8).
     val entrance = remember { MutableTransitionState(false).apply { targetState = true } }
     Column(Modifier.fillMaxWidth()) {
@@ -579,19 +619,25 @@ private fun ToolChip(item: ChatItem) {
                     if (item.streaming) {
                         ai.hermes.bots.ui.components.PulsingDot(dotSize = 8.dp)
                         Text(
-                            "Running ${item.toolName?.takeIf { it.isNotBlank() } ?: "tool"}…",
+                            "Running $toolLabel…",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.secondary,
                         )
                     } else {
+                        // Q12 (QA 2026-09-14): failed runs show an error-tinted icon instead
+                        // of the success check; duration stays.
                         Icon(
-                            Icons.Outlined.CheckCircle,
-                            contentDescription = null,
+                            if (item.failed) Icons.Outlined.Warning else Icons.Outlined.CheckCircle,
+                            contentDescription = if (item.failed) "Failed" else null,
                             modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = if (item.failed) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
                         )
                         Text(
-                            item.toolName?.takeIf { it.isNotBlank() } ?: "tool",
+                            toolLabel,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -613,12 +659,28 @@ private fun ToolChip(item: ChatItem) {
                     }
                 }
                 if (open) {
+                    // Q8 fidelity: the raw tool name stays readable in the detail.
+                    item.toolName?.takeIf {
+                        it.isNotBlank() && !it.equals(toolLabel, ignoreCase = true)
+                    }?.let {
+                        Text(
+                            it,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    // Q5 (QA 2026-09-14): clamp the summary so server context can't blow out
+                    // the bubble; "Show all" reveals the full text.
                     item.summary?.let {
                         Text(
                             it,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp),
+                            maxLines = if (showAll) 24 else 6,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     if (item.text.isNotBlank()) {
@@ -628,7 +690,31 @@ private fun ToolChip(item: ChatItem) {
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
-                            maxLines = 8,
+                            maxLines = if (showAll) 24 else 8,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    // Q7 follow-up (live QA 2026-09-14): the run's own output — on
+                    // non-verbose sessions this is flattened from the `result` payload.
+                    item.outputText?.let {
+                        Text(
+                            it,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                            maxLines = if (showAll) 24 else 8,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (item.summary != null || item.text.isNotBlank() || item.outputText != null) {
+                        Text(
+                            if (showAll) "Show less" else "Show all",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clickable { showAll = !showAll }
+                                .padding(top = 4.dp, bottom = 2.dp),
                         )
                     }
                 }
@@ -679,6 +765,15 @@ private fun ApprovalCardView(card: ApprovalCard, resolved: String?, expired: Boo
                     if (card.choices.none { it == resolved }) {
                         ChoiceRow(letter = "✓", label = resolved, chosen = true, dimmed = false, enabled = false, onChoose = {})
                     }
+                }
+                card.choices.isEmpty() && resolved == null && !expired -> {
+                    // Q11 (QA 2026-09-14): a free-text clarify legitimately arrives with no
+                    // choices (desktop renders a typed input) — never fabricate buttons.
+                    Text(
+                        "No preset options — reply below to answer.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 else -> card.choices.forEachIndexed { index, choice ->
                     ChoiceRow(
@@ -1006,7 +1101,8 @@ private fun TypingBubble() {
 @Composable
 private fun TypingDot(startOffsetMs: Int) {
     val transition = rememberInfiniteTransition(label = "typing-dot")
-    val alpha by transition.animateFloat(
+    // PERF (QA S1): alpha read in the draw phase (graphicsLayer), not composition.
+    val alpha = transition.animateFloat(
         initialValue = 0.25f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -1019,6 +1115,7 @@ private fun TypingDot(startOffsetMs: Int) {
     androidx.compose.foundation.layout.Box(
         Modifier
             .size(7.dp)
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha), CircleShape),
+            .graphicsLayer { this.alpha = alpha.value }
+            .background(MaterialTheme.colorScheme.onSurface, CircleShape),
     )
 }

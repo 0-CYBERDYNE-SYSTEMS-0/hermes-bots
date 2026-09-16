@@ -98,7 +98,6 @@ fun FaceAvatar(
     // Idle faces blink too, so Idle collects the shared clock as well (unless reduced motion).
     val tick = if (reducedMotion) null else BotFaceClock.rememberTick()
     val working = !reducedMotion && state == FaceState.Working
-    val tMs = tick?.value ?: 0L
     // Face animation is decorative (§3.2): default faces are stripped from the a11y tree;
     // callers that want a label pass a11yLabel ("{name}, {state}") instead.
     val faceModifier = if (a11yLabel == null) {
@@ -106,8 +105,11 @@ fun FaceAvatar(
     } else {
         modifier.size(size).semantics { contentDescription = a11yLabel }
     }
+    // PERF (QA S1): the tick State is read INSIDE the draw lambda, so a tick invalidates
+    // only this face's draw pass. Reading it during composition (the old `tMs`) recomposed
+    // every avatar at the clock's 15 fps.
     Canvas(modifier = faceModifier) {
-        drawFace(spec, tMs, working)
+        drawFace(spec, tick?.value ?: 0L, working)
     }
 }
 

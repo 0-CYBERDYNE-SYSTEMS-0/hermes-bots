@@ -323,6 +323,14 @@ private fun NeedsYouRow(
             }
           }
         }
+      } else {
+        // Q11 (QA 2026-09-14): no payload choices (free-text clarify) — never fabricate
+        // quick actions; point at the bot's chat (the row itself is already tappable).
+        Text(
+          "Open ${pending.botName}'s chat to respond",
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
     }
   }

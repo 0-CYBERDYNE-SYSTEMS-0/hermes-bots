@@ -116,11 +116,11 @@ class GatewayManager(
         }
     }
 
-    private fun stopOne(id: String) {
+    private suspend fun stopOne(id: String) {
         stateJobs.remove(id)?.cancel()
         _live.value[id]?.let { conn ->
             conn.gateway.stop()
-            conn.socket.stop()
+            conn.socket.stopAsync()
         }
         _live.update { it - id }
         _socketStates.update { it - id }

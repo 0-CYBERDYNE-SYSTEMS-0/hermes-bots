@@ -50,6 +50,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -80,6 +82,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -544,7 +547,11 @@ private fun AnyChatEntryView(entry: AnyChatEntry, avatar: AvatarImage?) {
 @Composable
 private fun ToolChipRow(entry: AnyChatEntry) {
     var open by remember(entry.id) { mutableStateOf(false) }
-    val expandable = entry.summary != null || entry.text.isNotBlank()
+    // Q7 (QA 2026-09-14): "Show all" unclamps the summary + output inside the chip.
+    var showAll by remember(entry.id) { mutableStateOf(false) }
+    val expandable = entry.summary != null || entry.text.isNotBlank() || entry.outputText != null
+    // Q8: humane label on the chip face; the raw name stays in the expandable detail.
+    val toolLabel = ai.hermes.bots.ui.util.Humanize.toolLabel(entry.toolName)
     Column(Modifier.fillMaxWidth().padding(start = 36.dp)) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -560,13 +567,25 @@ private fun ToolChipRow(entry: AnyChatEntry) {
                     if (entry.streaming) {
                         ai.hermes.bots.ui.components.PulsingDot(dotSize = 8.dp)
                         Text(
-                            "Running ${entry.toolName ?: "tool"}…",
+                            "Running $toolLabel…",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.secondary,
                         )
                     } else {
+                        // Q12 (QA 2026-09-14): parity with the canonical chip — settled runs
+                        // carry a state icon; failed runs render error-tinted, not success.
+                        Icon(
+                            if (entry.failed) Icons.Outlined.Warning else Icons.Outlined.CheckCircle,
+                            contentDescription = if (entry.failed) "Failed" else null,
+                            modifier = Modifier.size(16.dp),
+                            tint = if (entry.failed) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                        )
                         Text(
-                            entry.toolName ?: "tool",
+                            toolLabel,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -588,12 +607,27 @@ private fun ToolChipRow(entry: AnyChatEntry) {
                     }
                 }
                 if (open) {
+                    // Q8 fidelity: the raw tool name stays readable in the detail.
+                    entry.toolName?.takeIf {
+                        it.isNotBlank() && !it.equals(toolLabel, ignoreCase = true)
+                    }?.let {
+                        Text(
+                            it,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    // Q5 (QA 2026-09-14): clamp the summary; "Show all" reveals the full text.
                     entry.summary?.let {
                         Text(
                             it,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp),
+                            maxLines = if (showAll) 24 else 6,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     if (entry.text.isNotBlank()) {
@@ -603,7 +637,31 @@ private fun ToolChipRow(entry: AnyChatEntry) {
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
-                            maxLines = 8,
+                            maxLines = if (showAll) 24 else 8,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    // Q7 follow-up (live QA 2026-09-14): the run's own output — on
+                    // non-verbose sessions this is flattened from the `result` payload.
+                    entry.outputText?.let {
+                        Text(
+                            it,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                            maxLines = if (showAll) 24 else 8,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (entry.summary != null || entry.text.isNotBlank() || entry.outputText != null) {
+                        Text(
+                            if (showAll) "Show less" else "Show all",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clickable { showAll = !showAll }
+                                .padding(top = 4.dp, bottom = 2.dp),
                         )
                     }
                 }

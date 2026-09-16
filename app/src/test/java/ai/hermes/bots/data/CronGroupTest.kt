@@ -51,6 +51,32 @@ class CronGroupTest {
     }
 
     @Test
+    fun `room parse keeps member display names and pending action choice set`() {
+        // Q10 (QA 2026-09-14): display_name rides the wire members array; the pending
+        // action's choices mirror the driver-sanitized once/deny set.
+        val room = GroupRepository.parseRoomForTest(
+            "c1",
+            json.parseToJsonElement(
+                """{"room_id":"r9","name":"fleet","members":[
+                     {"profile":"scout","member_id":"scout","display_name":"Scout"},
+                     {"profile":"default"}],"disbanded_at":null}""",
+            ).jsonObject,
+        )!!
+        assertEquals(mapOf("scout" to "Scout"), room.memberNames)
+        val approval = GroupRepository.parsePendingActionForTest(
+            json.parseToJsonElement(
+                """{"kind":"approval","task_id":"t9","member_id":"scout","request_id":"q9",
+                   "approval":{"choices":["once","session","deny"],"command":"ls"}}""",
+            ).jsonObject,
+        )!!
+        assertEquals(listOf("once", "deny"), approval.choices) // "session" filtered like the driver does
+        val noChoices = GroupRepository.parsePendingActionForTest(
+            json.parseToJsonElement("""{"kind":"approval","task_id":"t8","member_id":"s"}""").jsonObject,
+        )!!
+        assertEquals(listOf("once", "deny"), noChoices.choices) // driver default when empty
+    }
+
+    @Test
     fun `log entry parses actor variants and text`() {
         val e1 = GroupRepository.parseLogEntryForTest(
             json.parseToJsonElement("""{"event_id":"e1","type":"message.user","actor":{"kind":"user","id":"u1"},"payload":{"text":"hi"}}""").jsonObject,

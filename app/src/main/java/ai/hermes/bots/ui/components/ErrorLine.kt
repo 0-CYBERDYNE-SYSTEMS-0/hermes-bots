@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 /**
  * The one inline error system-line (audit A28): centered pill, humane first line,
  * raw detail hidden behind a "Details" tap — never raw HTTP as the first line.
+ * Q4 (QA 2026-09-14): unmapped raws fall back to a generic humane line instead of
+ * rendering exception/protocol text up front; the raw text moves behind Details.
  */
 @Composable
 fun ErrorLine(
@@ -30,6 +32,7 @@ fun ErrorLine(
 ) {
   var showDetails by remember(raw) { mutableStateOf(false) }
   val friendly = Humanize.friendlyError(raw, botName)
+  val firstLine = friendly ?: "Something went wrong — try again."
   Column(
     modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
@@ -43,11 +46,11 @@ fun ErrorLine(
         horizontalAlignment = Alignment.CenterHorizontally,
       ) {
         Text(
-          friendly ?: raw,
+          firstLine,
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.error,
         )
-        if (friendly != null && friendly != raw) {
+        if (firstLine != raw) {
           Text(
             if (showDetails) "Hide details" else "Details",
             style = MaterialTheme.typography.labelMedium,

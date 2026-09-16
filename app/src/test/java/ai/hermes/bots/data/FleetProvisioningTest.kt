@@ -10,7 +10,7 @@ class FleetProvisioningTest {
 
     @Test
     fun `normalize prefixes scheme-less host`() {
-        assertEquals("http://100.64.0.10:9300", FleetProvisioning.normalizeBaseUrl("100.64.0.10:9300"))
+        assertEquals("http://100.64.10.10:9300", FleetProvisioning.normalizeBaseUrl("100.64.10.10:9300"))
     }
 
     @Test
@@ -20,7 +20,7 @@ class FleetProvisioningTest {
 
     @Test
     fun `normalize keeps https and path roots`() {
-        assertEquals("https://hermes.tail1234.ts.net", FleetProvisioning.normalizeBaseUrl("https://hermes.tail1234.ts.net/"))
+        assertEquals("https://hermes.tail9d3.ts.net", FleetProvisioning.normalizeBaseUrl("https://hermes.tail9d3.ts.net/"))
     }
 
     @Test
@@ -50,11 +50,11 @@ class FleetProvisioningTest {
     @Test
     fun `parses gated link user means basic with token as password`() {
         val params = FleetProvisioning.parseAddGatewayUri(
-            "hermesbots://add-gateway?url=http%3A%2F%2F100.64.0.10%3A9300&user=user&token=REDACTED-PASSWORD&name=m1",
+            "hermesbots://add-gateway?url=http%3A%2F%2F100.64.10.10%3A9300&user=user&token=example-token&name=m1",
         )!!
-        assertEquals("http://100.64.0.10:9300", params.url)
+        assertEquals("http://100.64.10.10:9300", params.url)
         assertEquals("user", params.username)
-        assertEquals("REDACTED-PASSWORD", params.password)
+        assertEquals("example-token", params.password)
         assertNull(params.token)
         assertEquals("m1", params.label)
     }
@@ -62,9 +62,9 @@ class FleetProvisioningTest {
     @Test
     fun `name is optional and scheme-less url gets http`() {
         val params = FleetProvisioning.parseAddGatewayUri(
-            "hermesbots://add-gateway?url=100.64.0.11%3A9300&user=user&token=pw",
+            "hermesbots://add-gateway?url=100.64.10.20%3A9300&user=user&token=pw",
         )!!
-        assertEquals("http://100.64.0.11:9300", params.url)
+        assertEquals("http://100.64.10.20:9300", params.url)
         assertNull(params.label)
     }
 
@@ -98,13 +98,13 @@ class FleetProvisioningTest {
     @Test
     fun `builder and parser round-trip`() {
         val uri = FleetProvisioning.addGatewayUri(
-            url = "100.64.0.10:9300/",
+            url = "100.64.10.10:9300/",
             username = "user",
             secret = "s3cr3t+/=",
             label = "m1 gate",
         )
         val params = FleetProvisioning.parseAddGatewayUri(uri)!!
-        assertEquals("http://100.64.0.10:9300", params.url)
+        assertEquals("http://100.64.10.10:9300", params.url)
         assertEquals("user", params.username)
         assertEquals("s3cr3t+/=", params.password)
         assertEquals("m1 gate", params.label)

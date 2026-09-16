@@ -10,10 +10,11 @@ import ai.hermes.bots.ui.components.PulsingDot
 import ai.hermes.bots.ui.theme.BotAccent
 import ai.hermes.bots.ui.theme.Dimens
 import ai.hermes.bots.ui.theme.LocalBrandDark
+import ai.hermes.bots.ui.theme.brandPalette
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,7 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -38,11 +38,8 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -98,15 +95,12 @@ fun RosterScreen(
 ) {
     val fleet by vm.merged.collectAsState()
     val avatars by vm.avatars.collectAsState()
-    val hasNotifications by vm.hasNotifications.collectAsState()
     val connections by vm.connections.collectAsState()
     val refreshing by vm.refreshing.collectAsState()
     val socketStates by vm.socketStates.collectAsState()
+    val expansionOverrides by vm.machineExpansionOverrides.collectAsState()
     val transientError by vm.transientError.collectAsState()
     val snackbar = remember { SnackbarHostState() }
-    // Resolved dark flag (in-app theme override wins over system) — per-bot accents (§3.1)
-    // must follow the same theme the user picked.
-    val darkTheme = LocalBrandDark.current
     var search by remember { mutableStateOf("") }
     var showHidden by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -124,43 +118,32 @@ fun RosterScreen(
 
     val hiddenCount = fleet.rows.count { it.hidden }
     val query = search.trim().lowercase(Locale.ROOT)
-    val visible = fleet.rows
+    val available = fleet.rows
         .filter { if (showHidden) it.hidden else !it.hidden }
-        .filter { m ->
-            if (query.isEmpty()) true
-            else m.name.lowercase(Locale.ROOT).contains(query) ||
-                (m.displayName ?: "").lowercase(Locale.ROOT).contains(query) ||
-                (m.primary.bot.description ?: "").lowercase(Locale.ROOT).contains(query) ||
-                (m.preview ?: "").lowercase(Locale.ROOT).contains(query)
+    fun botMatches(m: MergedBot): Boolean =
+        query.isEmpty() ||
+            m.name.lowercase(Locale.ROOT).contains(query) ||
+            (m.displayName ?: "").lowercase(Locale.ROOT).contains(query) ||
+            (m.primary.bot.description ?: "").lowercase(Locale.ROOT).contains(query) ||
+            (m.preview ?: "").lowercase(Locale.ROOT).contains(query)
+    val groups = FleetPresentation.groups(available, connections, socketStates)
+        .mapNotNull { group ->
+            if (query.isEmpty()) group
+            else if (group.connection.label.lowercase(Locale.ROOT).contains(query)) group
+            else group.copy(bots = group.bots.filter(::botMatches)).takeIf { it.bots.isNotEmpty() }
         }
-    // Rows are per-gateway: a chip appears only when the same bot name lives on several
-    // gateways, labeling which one this row is.
-    val collidedNames = fleet.rows
-        .groupBy { it.name.lowercase(Locale.ROOT) }
-        .filterValues { it.size > 1 }
-        .keys
-    fun chipLabel(m: MergedBot): String? =
-        if (m.name.lowercase(Locale.ROOT) !in collidedNames) null
-        else connections.firstOrNull { it.id == m.primary.bot.connectionId }?.label
-    val listed = visible.filterNot { it == fleet.pinnedAssistant }
-    val sections = listed.groupBy { it.sectionId }.toSortedMap(compareBy { it ?: "" })
+    fun machineLabel(m: MergedBot): String? =
+        connections.firstOrNull { it.id == m.primary.bot.connectionId }?.label
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("Bots") },
+                title = { Text("Fleet") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 actions = {
                     IconButton(onClick = { searchFocus.requestFocus() }) {
                         Icon(Icons.Filled.Search, contentDescription = "Search")
-                    }
-                    IconButton(onClick = onOpenNotifications) {
-                        BadgedBox(
-                            badge = { if (hasNotifications) Badge() },
-                        ) {
-                            Icon(Icons.Filled.Notifications, contentDescription = "Notifications")
-                        }
                     }
                     IconButton(onClick = onNewBot) {
                         Icon(Icons.Filled.Add, contentDescription = "New bot")
@@ -231,7 +214,7 @@ fun RosterScreen(
                                 androidx.compose.foundation.layout.Box {
                                     if (search.isEmpty()) {
                                         Text(
-                                            "Search bots and group chats",
+                                            "Search bots or machines",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -240,57 +223,6 @@ fun RosterScreen(
                                 }
                             },
                         )
-                    }
-                }
-                val active = fleet.rows.filter { it.activeNow }
-                if (active.isNotEmpty()) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(
-                            "Active now",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        ) {
-                            active.forEach { m ->
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .clip(MaterialTheme.shapes.medium)
-                                        .clickable {
-                                            vm.markRead(m.primary.bot.connectionId, m.name)
-                                            onOpenChat(m.primary.bot.connectionId, m.name)
-                                        }
-                                        .padding(4.dp),
-                                ) {
-                                    Box {
-                                        FaceAvatar(
-                                            m.name,
-                                            56.dp,
-                                            real = avatars[avatarKey(m.primary.bot)],
-                                            state = FaceState.Working,
-                                            a11yLabel = "${m.displayName ?: m.name}, working",
-                                        )
-                                        PulsingDot(
-                                            dotSize = 12.dp,
-                                            color = BotAccent.color(m.name, darkTheme),
-                                            borderColor = MaterialTheme.colorScheme.background,
-                                            modifier = Modifier.align(Alignment.BottomEnd),
-                                        )
-                                    }
-                                    Text(
-                                        m.displayName ?: m.name,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.width(64.dp),
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
                 if (hiddenCount > 0) {
@@ -305,12 +237,17 @@ fun RosterScreen(
                         )
                     }
                 }
-                if (visible.isEmpty()) {
+                if (groups.isEmpty()) {
                     if (showHidden) {
                         Text(
-                            "No hidden bots",
+                            if (query.isEmpty()) "No hidden bots" else "No hidden bots match “$search”",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(8.dp),
+                        )
+                    } else if (query.isNotEmpty()) {
+                        ai.hermes.bots.ui.components.EmptyState(
+                            title = "No matches",
+                            body = "No bots or machines match “$search”.",
                         )
                     } else if (connections.isNotEmpty() && connections.none { socketStates[it.id] is SocketState.Ready }) {
                         // SV-17: gateways configured but none reachable — don't claim the
@@ -349,42 +286,70 @@ fun RosterScreen(
                     }
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    fleet.pinnedAssistant?.takeIf { !showHidden || it.hidden }?.let { pinned ->
-                        item(key = "assistant-header") {
-                            ai.hermes.bots.ui.components.SectionHeader("Assistant")
-                        }
-                        item(key = "assistant-${pinned.primary.bot.connectionId}") {
-                            MergedBotRowItem(
-                                modifier = Modifier.animateItem(),
-                                bot = pinned,
-                                avatar = avatars[avatarKey(pinned.primary.bot)],
-                                chip = chipLabel(pinned),
-                                onClick = {
-                                    vm.markRead(pinned.primary.bot.connectionId, pinned.name)
-                                    onOpenChat(pinned.primary.bot.connectionId, pinned.name)
+                    groups.forEach { group ->
+                        val persisted = expansionOverrides[group.connection.id]
+                        val expanded = query.isNotEmpty() || FleetPresentation.isExpanded(group, persisted)
+                        item(key = "machine-${group.connection.id}") {
+                            MachineHeader(
+                                group = group,
+                                expanded = expanded,
+                                onToggle = {
+                                    if (query.isEmpty()) {
+                                        vm.setMachineExpanded(group.connection.id, !expanded)
+                                    }
                                 },
-                                onLongClick = { sheetFor = pinned },
                             )
                         }
-                    }
-                    sections.forEach { (sectionId, bots) ->
-                        item(key = "header-${sectionId ?: "_"}") {
-                            ai.hermes.bots.ui.components.SectionHeader(
-                                sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots",
-                            )
-                        }
-                        itemsIndexed(bots, key = { _, m -> "${m.primary.bot.connectionId}:${m.name}" }) { _, m ->
-                            MergedBotRowItem(
-                                modifier = Modifier.animateItem(),
-                                bot = m,
-                                avatar = avatars[avatarKey(m.primary.bot)],
-                                chip = chipLabel(m),
-                                onClick = {
-                                    vm.markRead(m.primary.bot.connectionId, m.name)
-                                    onOpenChat(m.primary.bot.connectionId, m.name)
-                                },
-                                onLongClick = { sheetFor = m },
-                            )
+                        if (expanded) {
+                            val assistant = group.bots.filter {
+                                it.name.equals(DEFAULT_ASSISTANT_NAME, ignoreCase = true) && group.connection.primary
+                            }
+                            if (assistant.isNotEmpty()) {
+                                item(key = "assistant-header-${group.connection.id}") {
+                                    ai.hermes.bots.ui.components.SectionHeader("Assistant")
+                                }
+                                itemsIndexed(
+                                    assistant,
+                                    key = { _, m -> "${m.primary.bot.connectionId}:${m.name}" },
+                                ) { _, m ->
+                                    MergedBotRowItem(
+                                        modifier = Modifier.animateItem().padding(horizontal = 8.dp),
+                                        bot = m,
+                                        avatar = avatars[avatarKey(m.primary.bot)],
+                                        onClick = {
+                                            vm.markRead(m.primary.bot.connectionId, m.name)
+                                            onOpenChat(m.primary.bot.connectionId, m.name)
+                                        },
+                                        onLongClick = { sheetFor = m },
+                                    )
+                                }
+                            }
+                            val sections = group.bots
+                                .filterNot { it in assistant }
+                                .groupBy { it.sectionId }
+                                .toSortedMap(compareBy { it ?: "" })
+                            sections.forEach { (sectionId, bots) ->
+                                item(key = "section-${group.connection.id}-${sectionId ?: "_"}") {
+                                    ai.hermes.bots.ui.components.SectionHeader(
+                                        sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots",
+                                    )
+                                }
+                                itemsIndexed(
+                                    bots,
+                                    key = { _, m -> "${m.primary.bot.connectionId}:${m.name}" },
+                                ) { _, m ->
+                                    MergedBotRowItem(
+                                        modifier = Modifier.animateItem().padding(horizontal = 8.dp),
+                                        bot = m,
+                                        avatar = avatars[avatarKey(m.primary.bot)],
+                                        onClick = {
+                                            vm.markRead(m.primary.bot.connectionId, m.name)
+                                            onOpenChat(m.primary.bot.connectionId, m.name)
+                                        },
+                                        onLongClick = { sheetFor = m },
+                                    )
+                                }
+                            }
                         }
                     }
             }
@@ -416,7 +381,7 @@ fun RosterScreen(
                         Text(
                             buildString {
                                 append(m.sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots")
-                                chipLabel(m)?.let { append(" · $it") }
+                                machineLabel(m)?.let { append(" · $it") }
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -475,6 +440,103 @@ fun RosterScreen(
 }
 
 private fun avatarKey(bot: BotRow): String = "${bot.connectionId}:${bot.name}"
+
+@Composable
+private fun MachineHeader(
+    group: MachineGroup,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val ready = group.state is SocketState.Ready
+    val statusLabel = when (group.state) {
+        is SocketState.Ready -> "Ready"
+        SocketState.Connecting -> "Connecting…"
+        is SocketState.Disconnected -> "Offline"
+        SocketState.Idle -> "Offline"
+    }
+    val statusColor = when (group.state) {
+        is SocketState.Ready -> brandPalette().success
+        SocketState.Connecting -> MaterialTheme.colorScheme.primary
+        is SocketState.Disconnected, SocketState.Idle -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val summary = buildList {
+        add("${group.botCount} ${if (group.botCount == 1) "bot" else "bots"}")
+        if (group.unreadCount > 0) add("${group.unreadCount} unread")
+    }.joinToString(" · ")
+    val outline = if (!ready || group.unreadCount > 0) {
+        MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
+
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 2.dp)
+            .border(1.dp, outline, MaterialTheme.shapes.medium)
+            .clickable(onClick = onToggle),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(9.dp)
+                    .clip(CircleShape)
+                    .background(statusColor),
+            )
+            Column(Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        group.connection.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (group.isPrimary) {
+                        Text(
+                            "★",
+                            color = MaterialTheme.colorScheme.secondary,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+                Text(
+                    "$statusLabel · $summary",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (group.activeCount > 0) {
+                Text(
+                    "${group.activeCount} working",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = brandPalette().success,
+                )
+            } else if (group.unreadCount > 0) {
+                Text(
+                    "${group.unreadCount} unread",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+            Text(
+                if (expanded) "⌃" else "⌄",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
 
 // Checklist 13: every face carries a11y text "{name}, {state}"; the drawn blink/pose is
 // decorative and excluded from the a11y tree (FaceAvatar handles that when a11yLabel == null).

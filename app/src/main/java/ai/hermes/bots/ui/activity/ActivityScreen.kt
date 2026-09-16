@@ -70,10 +70,12 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ActivityScreen(
-  onBack: () -> Unit,
+  onBack: (() -> Unit)? = null,
   onOpenChat: (connectionId: String, botName: String) -> Unit,
   onOpenRoutines: (connectionId: String, botName: String) -> Unit,
   onOpenHistory: () -> Unit,
+  title: String = "Activity",
+  showUpcoming: Boolean = true,
   vm: ActivityViewModel = viewModel(
     factory = viewModelFactory {
       initializer {
@@ -88,6 +90,7 @@ fun ActivityScreen(
   val avatars by vm.avatars.collectAsState()
   val jobs by vm.jobs.collectAsState()
   val history by vm.history.collectAsState()
+  val connectionLabels by vm.connectionLabels.collectAsState()
   val error by vm.error.collectAsState()
   val dark = LocalBrandDark.current
 
@@ -116,13 +119,11 @@ fun ActivityScreen(
   Scaffold(
     topBar = {
       TopAppBar(
-        title = { Text("Activity") },
+        title = { Text(title) },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        navigationIcon = {
-          IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-          }
-        },
+        navigationIcon = { onBack?.let { callback ->
+          IconButton(onClick = callback) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+        } },
         actions = {
           TextButton(onClick = onOpenHistory) { Text("History") }
         },
@@ -148,6 +149,7 @@ fun ActivityScreen(
           NeedsYouRow(
             row = row,
             avatar = avatars[row.pending.avatarKey],
+            machineLabel = connectionLabels.firstOrNull { it.id == row.pending.connectionId }?.label,
             nowMs = nowMs,
             dark = dark,
             onRespond = { choice -> vm.respond(row.pending, choice) },
@@ -160,23 +162,25 @@ fun ActivityScreen(
         }
       }
 
-      item(key = "header-live") { SectionHeader("Live now") }
+      item(key = "header-live") { SectionHeader(if (showUpcoming) "Live now" else "Working now") }
       if (liveRows.isEmpty()) {
         item(key = "empty-live") { EmptyLine("No bots are working right now.") }
       } else {
         items(liveRows, key = { "live-" + it.bot.connectionId + ":" + it.bot.name }) { entry ->
-          LiveNowRow(entry = entry, avatar = avatars[entry.avatarKey], onOpen = {
+          LiveNowRow(entry = entry, machineLabel = connectionLabels.firstOrNull { it.id == entry.bot.connectionId }?.label, avatar = avatars[entry.avatarKey], onOpen = {
             onOpenChat(entry.bot.connectionId, entry.bot.name)
           })
         }
       }
 
-      item(key = "header-upcoming") { SectionHeader("Upcoming") }
-      if (upcomingRows.isEmpty()) {
-        item(key = "empty-upcoming") { EmptyLine("No routines scheduled — add one from a bot's chat.") }
-      } else {
-        items(upcomingRows, key = { "up-" + it.connectionId + ":" + it.jobId }) { row ->
-          UpcomingRowView(row = row, nowMs = nowMs, onOpen = null)
+      if (showUpcoming) {
+        item(key = "header-upcoming") { SectionHeader("Upcoming") }
+        if (upcomingRows.isEmpty()) {
+          item(key = "empty-upcoming") { EmptyLine("No routines scheduled — add one from a bot's chat.") }
+        } else {
+          items(upcomingRows, key = { "up-" + it.connectionId + ":" + it.jobId }) { row ->
+            UpcomingRowView(row = row, nowMs = nowMs, onOpen = null)
+          }
         }
       }
 
@@ -185,9 +189,16 @@ fun ActivityScreen(
         item(key = "empty-recent") { EmptyLine("No recent activity yet.") }
       } else {
         items(recentRows, key = { "rec-" + it.atMs + ":" + it.sessionId }) { entry ->
-          RecentRow(entry = entry, avatar = entry.recentAvatarKey?.let { avatars[it] }, onOpen = {
-            entry.chatTarget?.let { (conn, bot) -> onOpenChat(conn, bot) }
-          })
+          RecentRow(
+            entry = entry,
+            avatar = entry.recentAvatarKey?.let { avatars[it] },
+            machineLabel = entry.connectionId?.let { id ->
+              connectionLabels.firstOrNull { it.id == id }?.label
+            },
+            onOpen = {
+              entry.chatTarget?.let { (conn, bot) -> onOpenChat(conn, bot) }
+            },
+          )
         }
       }
     }
@@ -243,6 +254,7 @@ private fun AccentDot(name: String, dark: Boolean) {
 private fun NeedsYouRow(
   row: ActivitySections.NeedsYouRow,
   avatar: AvatarImage?,
+  machineLabel: String?,
   nowMs: Long,
   dark: Boolean,
   onRespond: (String) -> Unit,
@@ -291,6 +303,13 @@ private fun NeedsYouRow(
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      machineLabel?.takeIf { it.isNotBlank() }?.let {
+        Text(
+          it,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
       if (pending.expired) {
         Text(
           "Expired",
@@ -337,7 +356,7 @@ private fun NeedsYouRow(
 }
 
 @Composable
-private fun LiveNowRow(entry: RosterEntry, avatar: AvatarImage?, onOpen: () -> Unit) {
+private fun LiveNowRow(entry: RosterEntry, machineLabel: String?, avatar: AvatarImage?, onOpen: () -> Unit) {
   Row(
     Modifier
       .fillMaxWidth()
@@ -367,6 +386,9 @@ private fun LiveNowRow(entry: RosterEntry, avatar: AvatarImage?, onOpen: () -> U
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
+      machineLabel?.takeIf { it.isNotBlank() }?.let {
+        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
     }
   }
 }
@@ -415,7 +437,12 @@ private fun UpcomingRowView(row: ActivitySections.UpcomingRow, nowMs: Long, onOp
 }
 
 @Composable
-private fun RecentRow(entry: NotificationEntry, avatar: AvatarImage?, onOpen: () -> Unit) {
+private fun RecentRow(
+  entry: NotificationEntry,
+  avatar: AvatarImage?,
+  machineLabel: String?,
+  onOpen: () -> Unit,
+) {
   val openable = entry.chatTarget != null
   Row(
     Modifier
@@ -443,6 +470,13 @@ private fun RecentRow(entry: NotificationEntry, avatar: AvatarImage?, onOpen: ()
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      machineLabel?.takeIf { it.isNotBlank() }?.let {
+        Text(
+          it,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
     }
     Spacer(Modifier.width(4.dp))
     Text(

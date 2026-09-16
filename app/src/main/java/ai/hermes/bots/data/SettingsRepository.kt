@@ -41,6 +41,7 @@ class SettingsRepository(private val context: Context) {
     private val keyNotificationHistory = stringPreferencesKey("notification_history_json")
     private val keyHistorySeenAt = longPreferencesKey("history_seen_at")
     private val keyBubbleMode = booleanPreferencesKey("bubble_mode")
+    private val keyMachineExpansion = stringPreferencesKey("machine_expansion_json")
 
     val themeMode: StateFlow<String> = context.settingsStore.data
         .map { prefs ->
@@ -66,6 +67,11 @@ class SettingsRepository(private val context: Context) {
         .map { prefs -> prefs[keyBubbleMode] ?: true }
         .stateIn(scope, SharingStarted.Eagerly, true)
 
+    /** Explicit Fleet disclosure choices, keyed by stable gateway connection ID. */
+    val machineExpansionOverrides: StateFlow<Map<String, Boolean>> = context.settingsStore.data
+        .map { prefs -> decodeMachineExpansion(prefs[keyMachineExpansion]) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
     suspend fun setThemeMode(mode: String) {
         if (mode !in THEME_MODES) return
         context.settingsStore.edit { prefs -> prefs[keyThemeMode] = mode }
@@ -78,6 +84,14 @@ class SettingsRepository(private val context: Context) {
     /** Persists the chat overflow "Bubble mode" toggle; survives process death (checklist 11). */
     suspend fun setBubbleMode(enabled: Boolean) {
         context.settingsStore.edit { prefs -> prefs[keyBubbleMode] = enabled }
+    }
+
+    suspend fun setMachineExpanded(connectionId: String, expanded: Boolean) {
+        context.settingsStore.edit { prefs ->
+            val next = decodeMachineExpansion(prefs[keyMachineExpansion]).toMutableMap()
+            next[connectionId] = expanded
+            prefs[keyMachineExpansion] = json.encodeToString(next)
+        }
     }
 
     /** Stamps the seen watermark; called when the Notifications screen is opened (SV-14). */
@@ -114,6 +128,10 @@ class SettingsRepository(private val context: Context) {
     private fun decodeHistory(text: String?): List<NotificationEntry> =
         text?.let { runCatching { json.decodeFromString<List<NotificationEntry>>(it) }.getOrDefault(emptyList()) }
             ?: emptyList()
+
+    private fun decodeMachineExpansion(text: String?): Map<String, Boolean> =
+        text?.let { runCatching { json.decodeFromString<Map<String, Boolean>>(it) }.getOrDefault(emptyMap()) }
+            ?: emptyMap()
 
     companion object {
         const val THEME_SYSTEM = "system"

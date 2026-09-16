@@ -1,5 +1,6 @@
 package ai.hermes.bots.ui.theme
 
+import ai.hermes.bots.R
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -9,119 +10,292 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * Brand type scale (audit A9): hierarchy from weight + size, default font family.
- * Metadata/time styles carry tabular figures ("tnum") so clocks don't jitter.
- */
+val ManropeFontFamily = FontFamily(
+    Font(R.font.manrope_variable, weight = FontWeight.Normal),
+    Font(R.font.manrope_variable, weight = FontWeight(450)),
+    Font(R.font.manrope_variable, weight = FontWeight.Medium),
+    Font(R.font.manrope_variable, weight = FontWeight(650)),
+    Font(R.font.manrope_variable, weight = FontWeight.Bold),
+)
+
+val IbmPlexMonoFontFamily = FontFamily(
+    Font(R.font.ibm_plex_mono_medium, weight = FontWeight.Medium),
+    Font(R.font.ibm_plex_mono_bold, weight = FontWeight.Bold),
+)
+
+data class FleetTypography(
+    val screenTitle: TextStyle,
+    val sectionTitle: TextStyle,
+    val machineName: TextStyle,
+    val botName: TextStyle,
+    val body: TextStyle,
+    val bodySmall: TextStyle,
+    val label: TextStyle,
+    val metadata: TextStyle,
+    val metadataStrong: TextStyle,
+    val eyebrow: TextStyle,
+)
+
+private val FleetType = FleetTypography(
+    screenTitle = TextStyle(
+        fontFamily = ManropeFontFamily,
+        fontSize = 28.sp,
+        lineHeight = 34.sp,
+        fontWeight = FontWeight(650),
+        letterSpacing = (-0.98).sp,
+    ),
+    sectionTitle = TextStyle(
+        fontFamily = ManropeFontFamily,
+        fontSize = 17.sp,
+        lineHeight = 23.sp,
+        fontWeight = FontWeight(650),
+    ),
+    machineName = TextStyle(
+        fontFamily = ManropeFontFamily,
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Bold,
+    ),
+    botName = TextStyle(
+        fontFamily = ManropeFontFamily,
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight(650),
+    ),
+    body = TextStyle(
+        fontFamily = ManropeFontFamily,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight(450),
+    ),
+    bodySmall = TextStyle(
+        fontFamily = ManropeFontFamily,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+        fontWeight = FontWeight(450),
+    ),
+    label = TextStyle(
+        fontFamily = ManropeFontFamily,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight(650),
+    ),
+    metadata = TextStyle(
+        fontFamily = IbmPlexMonoFontFamily,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        fontWeight = FontWeight.Medium,
+        fontFeatureSettings = "tnum",
+    ),
+    metadataStrong = TextStyle(
+        fontFamily = IbmPlexMonoFontFamily,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        fontWeight = FontWeight.Bold,
+        fontFeatureSettings = "tnum",
+    ),
+    eyebrow = TextStyle(
+        fontFamily = IbmPlexMonoFontFamily,
+        fontSize = 10.sp,
+        lineHeight = 12.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
+        fontFeatureSettings = "tnum",
+    ),
+)
+
 private val AppTypography = Typography(
-  titleLarge = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, lineHeight = 28.sp),
-  titleMedium = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 24.sp),
-  titleSmall = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp),
-  bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
-  bodyMedium = TextStyle(fontSize = 15.sp, lineHeight = 21.sp),
-  bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
-  labelLarge = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
-  labelMedium = TextStyle(
-    fontSize = 12.sp,
-    fontWeight = FontWeight.Medium,
-    lineHeight = 16.sp,
-    fontFeatureSettings = "tnum",
-  ),
-  labelSmall = TextStyle(
-    fontSize = 11.sp,
-    fontWeight = FontWeight.Medium,
-    lineHeight = 15.sp,
-    fontFeatureSettings = "tnum",
-  ),
+    displaySmall = FleetType.screenTitle,
+    headlineSmall = FleetType.screenTitle,
+    headlineMedium = FleetType.screenTitle,
+    titleLarge = FleetType.screenTitle,
+    titleMedium = FleetType.sectionTitle,
+    titleSmall = FleetType.machineName,
+    bodyLarge = FleetType.body,
+    bodyMedium = FleetType.body,
+    bodySmall = FleetType.bodySmall,
+    labelLarge = FleetType.label,
+    labelMedium = FleetType.metadata,
+    labelSmall = FleetType.metadata,
 )
 
-/** Shape scale (audit A10): bubbles/composer roundest, cards 16, chips 12, badges 8. */
 private val AppShapes = Shapes(
-  extraSmall = RoundedCornerShape(8.dp),
-  small = RoundedCornerShape(12.dp),
-  medium = RoundedCornerShape(16.dp),
-  large = RoundedCornerShape(20.dp),
-  extraLarge = RoundedCornerShape(28.dp),
+    extraSmall = RoundedCornerShape(Dimens.RadiusControl),
+    small = RoundedCornerShape(Dimens.RadiusRow),
+    medium = RoundedCornerShape(Dimens.RadiusAttention),
+    large = RoundedCornerShape(Dimens.RadiusInput),
+    extraLarge = RoundedCornerShape(Dimens.RadiusMachine),
 )
 
-// Brand palette — UI-SPEC.md §3 (powder blue primary, burnt orange secondary).
-// Dark: bg #0E1116 / surface #161B22 / raised #1F262E · primary #8FC7E8 · secondary #E0662B
-// Light: bg #FAFAF8 / surface #FFFFFF / raised #F0EDE8 · primary #3D7EA6 · secondary #C65218
+data class FleetColors(
+    val canvas: Color,
+    val canvasDeep: Color,
+    val surface: Color,
+    val surfaceRaised: Color,
+    val surfaceInput: Color,
+    val surfaceNav: Color,
+    val line: Color,
+    val lineQuiet: Color,
+    val text: Color,
+    val textMuted: Color,
+    val textDim: Color,
+    val primary: Color,
+    val primaryDeep: Color,
+    val attention: Color,
+    val success: Color,
+    val danger: Color,
+    val primaryMachine: Color,
+    val identityLime: Color,
+)
+
+private val DarkFleetColors = FleetColors(
+    canvas = Color(0xFF0D1116),
+    canvasDeep = Color(0xFF0B0E12),
+    surface = Color(0xFF12171E),
+    surfaceRaised = Color(0xFF1A212B),
+    surfaceInput = Color(0xFF202731),
+    surfaceNav = Color(0xF50C1015),
+    line = Color(0xFF29323E),
+    lineQuiet = Color(0xFF202833),
+    text = Color(0xFFF3F5F7),
+    textMuted = Color(0xFF9AA6B5),
+    textDim = Color(0xFF667282),
+    primary = Color(0xFF9DD7F2),
+    primaryDeep = Color(0xFF163D52),
+    attention = Color(0xFFEF7137),
+    success = Color(0xFF65D28C),
+    danger = Color(0xFFFF6F68),
+    primaryMachine = Color(0xFFEFC75E),
+    identityLime = Color(0xFFCDE73E),
+)
+
+private val LightFleetColors = FleetColors(
+    canvas = Color(0xFFF6F5F1),
+    canvasDeep = Color(0xFFEEECE7),
+    surface = Color.White,
+    surfaceRaised = Color(0xFFECEFF2),
+    surfaceInput = Color(0xFFE8EDF1),
+    surfaceNav = Color(0xFAFBFAF7),
+    line = Color(0xFFD1D8DE),
+    lineQuiet = Color(0xFFE2E6EA),
+    text = Color(0xFF17202A),
+    textMuted = Color(0xFF596675),
+    textDim = Color(0xFF778391),
+    primary = Color(0xFF286F94),
+    primaryDeep = Color(0xFFD8EBF4),
+    attention = Color(0xFFB94716),
+    success = Color(0xFF287345),
+    danger = Color(0xFFB93430),
+    primaryMachine = Color(0xFF806000),
+    identityLime = Color(0xFF647800),
+)
+
+private fun darkMaterialColors(colors: FleetColors) = darkColorScheme(
+    primary = colors.primary,
+    onPrimary = colors.canvasDeep,
+    primaryContainer = colors.primaryDeep,
+    onPrimaryContainer = colors.primary,
+    secondary = colors.attention,
+    onSecondary = colors.canvasDeep,
+    secondaryContainer = colors.surfaceRaised,
+    onSecondaryContainer = colors.attention,
+    tertiary = colors.success,
+    onTertiary = colors.canvasDeep,
+    background = colors.canvas,
+    onBackground = colors.text,
+    surface = colors.surface,
+    onSurface = colors.text,
+    surfaceVariant = colors.surfaceRaised,
+    onSurfaceVariant = colors.textMuted,
+    outline = colors.line,
+    outlineVariant = colors.lineQuiet,
+    surfaceContainerLowest = colors.canvasDeep,
+    surfaceContainerLow = colors.surface,
+    surfaceContainer = colors.surfaceRaised,
+    surfaceContainerHigh = colors.surfaceInput,
+    surfaceContainerHighest = colors.surfaceInput,
+    surfaceTint = Color.Transparent,
+    error = colors.danger,
+    onError = colors.canvasDeep,
+    scrim = colors.canvasDeep,
+)
+
+private fun lightMaterialColors(colors: FleetColors) = lightColorScheme(
+    primary = colors.primary,
+    onPrimary = Color.White,
+    primaryContainer = colors.primaryDeep,
+    onPrimaryContainer = colors.text,
+    secondary = colors.attention,
+    onSecondary = Color.White,
+    secondaryContainer = colors.surfaceRaised,
+    onSecondaryContainer = colors.attention,
+    tertiary = colors.success,
+    onTertiary = Color.White,
+    background = colors.canvas,
+    onBackground = colors.text,
+    surface = colors.surface,
+    onSurface = colors.text,
+    surfaceVariant = colors.surfaceRaised,
+    onSurfaceVariant = colors.textMuted,
+    outline = colors.line,
+    outlineVariant = colors.lineQuiet,
+    surfaceContainerLowest = colors.canvasDeep,
+    surfaceContainerLow = colors.surface,
+    surfaceContainer = colors.surfaceRaised,
+    surfaceContainerHigh = colors.surfaceInput,
+    surfaceContainerHighest = colors.surfaceInput,
+    surfaceTint = Color.Transparent,
+    error = colors.danger,
+    onError = Color.White,
+    scrim = colors.canvasDeep,
+)
 
 data class BrandPalette(val success: Color, val danger: Color)
 
-private val DarkColors = darkColorScheme(
-    primary = Color(0xFF8FC7E8),
-    onPrimary = Color(0xFF0E1116),
-    primaryContainer = Color(0xFF1E3A4C),
-    onPrimaryContainer = Color(0xFF8FC7E8),
-    secondary = Color(0xFFE0662B),
-    onSecondary = Color(0xFF0E1116),
-    secondaryContainer = Color(0xFF4A2412),
-    onSecondaryContainer = Color(0xFFF6B79A),
-    background = Color(0xFF0E1116),
-    onBackground = Color(0xFFE6EDF3),
-    surface = Color(0xFF161B22),
-    onSurface = Color(0xFFE6EDF3),
-    surfaceVariant = Color(0xFF1F262E),
-    onSurfaceVariant = Color(0xFF9DA7B3),
-    outline = Color(0xFF2D3640),
-    surfaceContainer = Color(0xFF1F262E),
-    surfaceContainerHigh = Color(0xFF242B34),
-    surfaceContainerHighest = Color(0xFF2A323C),
-    surfaceTint = Color(0xFF1F262E),
-    error = Color(0xFFE5534B),
-    onError = Color(0xFF0E1116),
-)
-
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF3D7EA6),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD6E7F2),
-    onPrimaryContainer = Color(0xFF1C3A4D),
-    secondary = Color(0xFFC65218),
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFF7DCCB),
-    onSecondaryContainer = Color(0xFF7A3110),
-    background = Color(0xFFFAFAF8),
-    onBackground = Color(0xFF1C2128),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF1C2128),
-    surfaceVariant = Color(0xFFF0EDE8),
-    onSurfaceVariant = Color(0xFF57606A),
-    outline = Color(0xFFD0D4D9),
-    surfaceContainer = Color(0xFFF0EDE8),
-    surfaceContainerHigh = Color(0xFFEBE7E1),
-    surfaceContainerHighest = Color(0xFFE5E1DB),
-    surfaceTint = Color(0xFFF0EDE8),
-    error = Color(0xFFC93C37),
-    onError = Color.White,
-)
-
-/** Tracks the resolved dark flag (in-app override wins over system) so non-color-scheme
- *  accents (status dots, danger text) follow the SAME theme the user picked. */
 val LocalBrandDark = staticCompositionLocalOf { true }
+val LocalFleetColors = staticCompositionLocalOf { DarkFleetColors }
+val LocalFleetTypography = staticCompositionLocalOf { FleetType }
+
+object HermesTheme {
+    val colors: FleetColors
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalFleetColors.current
+
+    val typography: FleetTypography
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalFleetTypography.current
+}
 
 @Composable
-fun brandPalette(): BrandPalette =
-    if (LocalBrandDark.current) BrandPalette(success = Color(0xFF57AB5A), danger = Color(0xFFE5534B))
-    else BrandPalette(success = Color(0xFF3E8F4A), danger = Color(0xFFC93C37))
+fun brandPalette(): BrandPalette = BrandPalette(
+    success = HermesTheme.colors.success,
+    danger = HermesTheme.colors.danger,
+)
 
 @Composable
 fun HermesBotsTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalBrandDark provides darkTheme) {
+    val colors = if (darkTheme) DarkFleetColors else LightFleetColors
+    CompositionLocalProvider(
+        LocalBrandDark provides darkTheme,
+        LocalFleetColors provides colors,
+        LocalFleetTypography provides FleetType,
+    ) {
         MaterialTheme(
-            colorScheme = if (darkTheme) DarkColors else LightColors,
+            colorScheme = if (darkTheme) darkMaterialColors(colors) else lightMaterialColors(colors),
             typography = AppTypography,
             shapes = AppShapes,
             content = content,

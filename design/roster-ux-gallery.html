@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hermes Bots — Fleet roster directions</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f3f5f7;
+      --muted: #9aa6b5;
+      --dim: #667282;
+      --paper: #0b0e12;
+      --surface: #12171e;
+      --raised: #1a212b;
+      --line: #29323e;
+      --blue: #9dd7f2;
+      --blue-deep: #163d52;
+      --orange: #ef7137;
+      --lime: #cde73e;
+      --green: #65d28c;
+      --red: #ff6f68;
+      --yellow: #efc75e;
+      --radius: 22px;
+      --shadow: 0 30px 100px rgba(0, 0, 0, .42);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 88% 0%, rgba(62, 126, 166, .18), transparent 29rem),
+        radial-gradient(circle at 0% 35%, rgba(224, 102, 43, .09), transparent 34rem),
+        var(--paper);
+      font-family: "Avenir Next", Avenir, "Trebuchet MS", sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      opacity: .28;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.08'/%3E%3C/svg%3E");
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible {
+      outline: 3px solid rgba(157, 215, 242, .8);
+      outline-offset: 3px;
+    }
+
+    .shell { width: min(1480px, calc(100% - 40px)); margin: 0 auto; }
+    .hero { padding: 72px 0 44px; border-bottom: 1px solid var(--line); }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 26px;
+      color: var(--blue);
+      font: 700 12px/1.2 "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before { content: ""; width: 34px; height: 2px; background: var(--orange); }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 1000px;
+      margin-bottom: 24px;
+      font: 650 clamp(44px, 7vw, 96px)/.94 "Avenir Next", Avenir, sans-serif;
+      letter-spacing: -.065em;
+    }
+    h1 em { color: var(--blue); font-family: Georgia, serif; font-weight: 400; }
+    .hero-copy {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr);
+      gap: 64px;
+      align-items: end;
+    }
+    .hero-copy > p { max-width: 760px; margin: 0; color: #c2c9d2; font-size: 20px; line-height: 1.55; }
+    .verdict {
+      border-left: 2px solid var(--orange);
+      padding: 4px 0 4px 20px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .verdict strong { display: block; margin-bottom: 4px; color: var(--ink); }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      margin: 44px 0 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--line);
+    }
+    .principle { min-height: 148px; padding: 22px; background: rgba(18, 23, 30, .96); }
+    .principle b { display: block; margin-bottom: 22px; color: var(--orange); font: 700 11px/1 monospace; }
+    .principle strong { display: block; margin-bottom: 7px; font-size: 16px; }
+    .principle span { color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+    .gallery-nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(41, 50, 62, .8);
+      background: rgba(11, 14, 18, .86);
+      backdrop-filter: blur(18px);
+    }
+    .gallery-nav .shell { display: flex; gap: 8px; padding: 12px 0; overflow-x: auto; }
+    .nav-pill {
+      flex: 0 0 auto;
+      padding: 9px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .nav-pill:hover { border-color: var(--blue); color: var(--ink); }
+    .nav-pill.recommended { border-color: rgba(157, 215, 242, .42); color: var(--blue); }
+
+    .direction {
+      display: grid;
+      grid-template-columns: minmax(280px, 430px) minmax(0, 1fr);
+      gap: clamp(48px, 7vw, 110px);
+      align-items: start;
+      min-height: 850px;
+      padding: 92px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .direction-copy { position: sticky; top: 96px; }
+    .option-no { margin-bottom: 20px; color: var(--orange); font: 700 12px/1 monospace; letter-spacing: .14em; }
+    .direction h2 { margin-bottom: 16px; font-size: clamp(34px, 4vw, 58px); line-height: 1; letter-spacing: -.045em; }
+    .subhead { max-width: 38ch; margin-bottom: 28px; color: #bac3cd; font-size: 18px; line-height: 1.5; }
+    .signal {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 24px;
+      padding: 7px 11px;
+      border-radius: 8px;
+      color: var(--green);
+      background: rgba(101, 210, 140, .09);
+      font: 700 11px/1 monospace;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .signal::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .tradeoffs { display: grid; gap: 0; margin: 0 0 28px; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+    .tradeoffs li { display: grid; grid-template-columns: 20px 1fr; gap: 10px; padding: 13px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .tradeoffs li::before { content: "+"; color: var(--blue); font-family: monospace; }
+    .tradeoffs li.caution::before { content: "−"; color: var(--orange); }
+    .reaction-label { margin-bottom: 10px; color: var(--dim); font: 700 10px/1 monospace; letter-spacing: .13em; text-transform: uppercase; }
+    .reactions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .react {
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .react:hover, .react[aria-pressed="true"] { border-color: var(--orange); color: var(--ink); background: rgba(239, 113, 55, .1); }
+
+    .stage {
+      display: grid;
+      place-items: start center;
+      min-width: 0;
+      padding: 38px;
+      border: 1px solid var(--line);
+      border-radius: 38px;
+      background:
+        linear-gradient(135deg, rgba(157, 215, 242, .055), transparent 36%),
+        repeating-linear-gradient(90deg, transparent 0 39px, rgba(255,255,255,.018) 40px),
+        #0e1217;
+    }
+    .phone {
+      width: min(390px, 100%);
+      min-height: 760px;
+      overflow: hidden;
+      border: 8px solid #272e38;
+      border-radius: 44px;
+      background: #0d1116;
+      box-shadow: var(--shadow), inset 0 0 0 1px rgba(255, 255, 255, .08);
+    }
+    .statusbar { display: flex; justify-content: space-between; padding: 14px 22px 7px; color: #e7ebf0; font: 650 11px/1 monospace; }
+    .appbar { display: flex; align-items: center; gap: 10px; padding: 14px 17px 10px; }
+    .app-title { flex: 1; font-size: 27px; font-weight: 650; letter-spacing: -.04em; }
+    .icon-btn {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 20px;
+    }
+    .icon-btn:hover { color: var(--ink); background: var(--raised); }
+    .phone-body { padding: 0 14px 84px; }
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 5px 0 13px;
+      padding: 11px 13px;
+      border: 1px solid transparent;
+      border-radius: 17px;
+      background: #202731;
+      color: var(--muted);
+    }
+    .search:focus-within { border-color: var(--blue); }
+    .search input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 13px; }
+    .search input::placeholder { color: #7e8a99; }
+
+    .policy-lab { margin: 0 0 12px; }
+    .policy-label { margin: 0 0 7px 2px; color: var(--dim); font: 700 9px/1 monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .segmented { display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px; border-radius: 11px; background: #171d25; }
+    .segmented button { padding: 7px 4px; border: 0; border-radius: 8px; background: transparent; color: #7e8a99; cursor: pointer; font-size: 10px; }
+    .segmented button.active { color: var(--ink); background: #2a3440; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+
+    .machine { margin-bottom: 10px; overflow: hidden; border: 1px solid #28313c; border-radius: 19px; background: #121820; }
+    .machine.needs-attention { border-color: rgba(239, 113, 55, .55); }
+    .machine-head {
+      display: grid;
+      grid-template-columns: 12px minmax(0, 1fr) auto 22px;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+      padding: 14px;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .health { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(101, 210, 140, .08); }
+    .health.warn { background: var(--orange); box-shadow: 0 0 0 4px rgba(239, 113, 55, .09); }
+    .health.off { background: #687280; box-shadow: none; }
+    .machine-name { min-width: 0; }
+    .machine-name strong { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 14px; }
+    .primary-mark { color: var(--yellow); font-size: 10px; }
+    .machine-name small { display: block; overflow: hidden; color: var(--muted); font: 500 10px/1.25 monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .machine-meta { text-align: right; }
+    .machine-meta strong { display: block; margin-bottom: 3px; font: 700 10px/1 monospace; }
+    .machine-meta small { color: var(--muted); font-size: 9px; }
+    .chevron { color: var(--dim); transition: transform .22s ease; }
+    .machine-head[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+    .machine-panel { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .24s ease; }
+    .machine-panel > div { min-height: 0; overflow: hidden; }
+    .machine[data-open="false"] .machine-panel { grid-template-rows: 0fr; }
+    .machine-inner { padding: 0 8px 9px; }
+    .section-label { padding: 6px 8px 5px; color: #728092; font: 700 9px/1 monospace; letter-spacing: .12em; text-transform: uppercase; }
+
+    .bot-row {
+      display: grid;
+      grid-template-columns: 39px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 57px;
+      padding: 7px 7px;
+      border-radius: 13px;
+    }
+    .bot-row:hover { background: #1b232d; }
+    .bot-copy { min-width: 0; }
+    .bot-copy strong { display: flex; align-items: center; gap: 6px; overflow: hidden; margin-bottom: 2px; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+    .bot-copy small { display: block; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .bot-state { color: #8290a1; font: 700 9px/1 monospace; text-align: right; }
+    .bot-state.active { color: var(--green); }
+    .bot-state.waiting { color: var(--orange); }
+    .tiny-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--orange); }
+
+    .face {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 auto;
+      overflow: hidden;
+      background: var(--face, #5dd4c3);
+      border-radius: var(--shape, 45% 45% 42% 42%);
+      transform: rotate(var(--tilt, 0deg));
+    }
+    .face::before, .face::after {
+      content: "";
+      position: absolute;
+      top: var(--eye-y, 14px);
+      width: 5px;
+      height: 6px;
+      border-radius: 50%;
+      background: #192027;
+      transform: rotate(calc(var(--tilt, 0deg) * -1));
+    }
+    .face::before { left: 9px; }
+    .face::after { right: 9px; }
+    .face.triangle { clip-path: polygon(50% 4%, 96% 94%, 4% 94%); border-radius: 0; }
+    .face.drop { clip-path: path("M18 1 C28 13 35 21 34 27 C33 35 26 36 18 36 C10 36 3 35 2 27 C1 21 8 13 18 1Z"); border-radius: 0; }
+    .face.cloud { border-radius: 48% 52% 35% 35% / 58% 58% 36% 36%; }
+    .face.yellow { --face: #d9ea42; }
+    .face.purple { --face: #7651de; }
+    .face.cyan { --face: #4fd5c1; }
+    .face.blue { --face: #54a6e6; }
+    .face.coral { --face: #ef7d55; }
+    .face.small { width: 25px; height: 25px; border: 2px solid #121820; }
+    .face.small::before, .face.small::after { top: 9px; width: 3px; height: 4px; }
+    .face.small::before { left: 6px; }
+    .face.small::after { right: 6px; }
+    .facepile { display: flex; justify-content: flex-end; padding-left: 8px; }
+    .facepile .face + .face { margin-left: -8px; }
+
+    .bottom-nav {
+      position: absolute;
+      inset: auto 0 0;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      padding: 9px 8px 14px;
+      border-top: 1px solid #202833;
+      background: rgba(12, 16, 21, .96);
+      backdrop-filter: blur(14px);
+    }
+    .phone-screen { position: relative; min-height: 744px; }
+    .bottom-nav button { border: 0; background: transparent; color: #718092; cursor: pointer; font-size: 9px; }
+    .bottom-nav button span { display: block; margin-bottom: 3px; font-size: 17px; }
+    .bottom-nav button.active { color: var(--blue); }
+
+    .attention-card {
+      display: grid;
+      grid-template-columns: 8px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin: 3px 0 11px;
+      padding: 11px 12px;
+      border: 1px solid rgba(239, 113, 55, .35);
+      border-radius: 15px;
+      background: rgba(239, 113, 55, .07);
+    }
+    .attention-card .bar { width: 5px; height: 33px; border-radius: 4px; background: var(--orange); }
+    .attention-card strong { display: block; margin-bottom: 2px; font-size: 11px; }
+    .attention-card small { color: var(--muted); font-size: 9px; }
+    .attention-card button { padding: 6px 8px; border: 0; border-radius: 8px; background: var(--orange); color: #111; cursor: pointer; font-size: 9px; font-weight: 750; }
+
+    .pulse-strip { margin: 0 -14px 14px; padding: 3px 14px 13px; overflow-x: auto; scrollbar-width: none; }
+    .pulse-strip::-webkit-scrollbar { display: none; }
+    .pulse-title { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--muted); font: 700 9px/1 monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .pulse-cards { display: flex; gap: 8px; width: max-content; }
+    .pulse-card { width: 144px; padding: 11px; border: 1px solid #2a3542; border-radius: 16px; background: #151c24; }
+    .pulse-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+    .pulse-card strong { display: block; max-width: 85px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .pulse-card small { color: var(--muted); font: 500 8px/1.25 monospace; }
+    .progress { height: 3px; margin-top: 9px; overflow: hidden; border-radius: 3px; background: #28313c; }
+    .progress i { display: block; width: var(--progress, 55%); height: 100%; background: var(--green); }
+
+    .machine-shelf { display: grid; gap: 10px; }
+    .shelf-card { padding: 14px; border: 1px solid #28313c; border-radius: 18px; background: #121820; cursor: pointer; transition: .2s ease; }
+    .shelf-card:hover { border-color: var(--blue); transform: translateY(-1px); }
+    .shelf-top { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; }
+    .machine-glyph { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; color: var(--blue); background: var(--blue-deep); font-size: 15px; }
+    .shelf-name { flex: 1; }
+    .shelf-name strong { display: block; font-size: 13px; }
+    .shelf-name small { color: var(--muted); font: 500 9px/1 monospace; }
+    .shelf-stats { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 13px; }
+    .shelf-stat { border-right: 1px solid #27303a; }
+    .shelf-stat:last-child { border-right: 0; padding-left: 10px; }
+    .shelf-stat:nth-child(2) { padding-left: 10px; }
+    .shelf-stat b { display: block; margin-bottom: 3px; font: 700 14px/1 monospace; }
+    .shelf-stat span { color: var(--dim); font-size: 8px; text-transform: uppercase; }
+    .shelf-footer { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 9px; }
+    .shelf-footer .facepile { padding-right: 7px; }
+    .offline-card { opacity: .65; }
+
+    .tab-row { display: flex; gap: 7px; margin: 3px -14px 14px; padding: 0 14px 3px; overflow-x: auto; scrollbar-width: none; }
+    .machine-tab { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; padding: 8px 11px; border: 1px solid #28313c; border-radius: 13px; background: #131920; color: var(--muted); cursor: pointer; font-size: 10px; }
+    .machine-tab.active { border-color: var(--blue); color: var(--ink); background: #1b2b36; }
+    .machine-tab .health { width: 6px; height: 6px; box-shadow: none; }
+    .focus-hero { display: grid; grid-template-columns: 1fr auto; align-items: end; margin-bottom: 7px; padding: 11px 3px; }
+    .focus-hero h3 { margin-bottom: 3px; font-size: 20px; letter-spacing: -.035em; }
+    .focus-hero p { margin: 0; color: var(--muted); font: 500 9px/1.3 monospace; }
+    .focus-hero .facepile { padding-bottom: 2px; }
+    .flat-list { display: grid; gap: 2px; }
+    .flat-list .bot-row { border-bottom: 1px solid #202833; border-radius: 0; }
+
+    .comparison { padding: 90px 0 110px; }
+    .comparison h2 { margin-bottom: 10px; font-size: clamp(34px, 4vw, 58px); letter-spacing: -.04em; }
+    .comparison > p { max-width: 720px; margin-bottom: 38px; color: var(--muted); font-size: 17px; line-height: 1.55; }
+    .decision-table { width: 100%; border-collapse: collapse; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
+    .decision-table th, .decision-table td { padding: 17px 18px; border-bottom: 1px solid var(--line); text-align: left; }
+    .decision-table th { color: var(--dim); font: 700 10px/1 monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .decision-table td { color: #b4bdc8; font-size: 13px; }
+    .decision-table td:first-child { color: var(--ink); font-weight: 700; }
+    .decision-table tr:last-child td { border-bottom: 0; }
+    .winner { color: var(--green) !important; }
+    .handoff { display: flex; justify-content: space-between; gap: 30px; align-items: center; margin-top: 42px; padding: 24px; border: 1px solid rgba(157, 215, 242, .32); border-radius: 20px; background: rgba(22, 61, 82, .24); }
+    .handoff p { margin: 0; color: #c4ced8; line-height: 1.55; }
+    .handoff b { color: var(--ink); }
+    .reset-reactions { flex: 0 0 auto; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--muted); cursor: pointer; }
+    .toast { position: fixed; right: 20px; bottom: 20px; z-index: 100; max-width: 320px; padding: 12px 15px; border: 1px solid #3a4655; border-radius: 13px; background: #171e27; box-shadow: var(--shadow); color: var(--ink); font-size: 13px; transform: translateY(30px); opacity: 0; pointer-events: none; transition: .22s ease; }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    [hidden] { display: none !important; }
+
+    @media (max-width: 980px) {
+      .hero-copy, .direction { grid-template-columns: 1fr; }
+      .direction { gap: 42px; }
+      .direction-copy { position: static; }
+      .principles { grid-template-columns: repeat(2, 1fr); }
+      .stage { padding: 28px 12px; }
+    }
+    @media (max-width: 620px) {
+      .shell { width: min(100% - 24px, 1480px); }
+      .hero { padding-top: 48px; }
+      h1 { font-size: 46px; }
+      .hero-copy { gap: 28px; }
+      .principles { grid-template-columns: 1fr; }
+      .direction { min-height: 0; padding: 66px 0; }
+      .stage { margin: 0 -6px; border-radius: 26px; }
+      .phone { border-width: 5px; border-radius: 34px; }
+      .decision-table { display: block; overflow-x: auto; }
+      .handoff { align-items: flex-start; flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="shell">
+      <div class="eyebrow">Hermes Bots · roster study · 15 Sep 2026</div>
+      <h1>Turn a wall of bots into a <em>legible fleet.</em></h1>
+      <div class="hero-copy">
+        <p>The live phone shows strong bot identity but weak topology: every gateway is blended into one long list, so suffixes like “-local” are doing work the interface should do. These three directions make the machine the stable frame and the bot the expressive character inside it.</p>
+        <div class="verdict"><strong>My call</strong>Group by machine. Don’t reset everything closed on every launch. Open the primary and anything that needs attention; remember the human’s choices after that.</div>
+      </div>
+      <div class="principles" aria-label="Design principles">
+        <div class="principle"><b>01 / PLACE</b><strong>Machine is context</strong><span>Health, ownership and offline state belong in the roster—not one screen away.</span></div>
+        <div class="principle"><b>02 / SIGNAL</b><strong>Collapsed ≠ hidden</strong><span>A closed header still answers: connected? working? unread? needs me?</span></div>
+        <div class="principle"><b>03 / IDENTITY</b><strong>Faces find bots</strong><span>Keep stable geometric faces. Use color and shape for identity, never status alone.</span></div>
+        <div class="principle"><b>04 / MOTION</b><strong>Animate meaning</strong><span>Only working/waiting bots move. A fleet of constantly bobbing faces becomes static noise.</span></div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="gallery-nav" aria-label="Gallery sections">
+    <div class="shell">
+      <button class="nav-pill recommended" data-jump="smart-fleet">A · Smart Fleet ★</button>
+      <button class="nav-pill" data-jump="pulseboard">B · Pulseboard</button>
+      <button class="nav-pill" data-jump="machine-deck">C · Machine Deck</button>
+      <button class="nav-pill" data-jump="decision">Decision table</button>
+    </div>
+  </nav>
+
+  <main class="shell">
+    <section class="direction" id="smart-fleet">
+      <div class="direction-copy">
+        <div class="option-no">OPTION A · RECOMMENDED</div>
+        <div class="signal">Best balance</div>
+        <h2>Smart Fleet</h2>
+        <p class="subhead">Machine accordions with useful summaries. The primary machine and any group with work, unread activity or trouble open themselves; calm secondary machines stay tucked away.</p>
+        <ul class="tradeoffs">
+          <li>Preserves one-tap access to the bots people use most.</li>
+          <li>Explains partial outages exactly where bots disappear.</li>
+          <li>Supports custom sections inside each machine without mixing ownership.</li>
+          <li class="caution">Nested sections add hierarchy, so headers must stay visually quiet.</li>
+        </ul>
+        <div class="reaction-label">Your reaction</div>
+        <div class="reactions" data-option="Smart Fleet">
+          <button class="react" aria-pressed="false">Ship this</button>
+          <button class="react" aria-pressed="false">Too dense</button>
+          <button class="react" aria-pressed="false">Try lighter</button>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="statusbar"><span>11:32</span><span>◉ ◒ 100%</span></div>
+            <div class="appbar">
+              <div class="app-title">Fleet</div>
+              <button class="icon-btn" aria-label="Activity">◌</button>
+              <button class="icon-btn" aria-label="Add bot">＋</button>
+              <button class="icon-btn" aria-label="More options">⋮</button>
+            </div>
+            <div class="phone-body">
+              <label class="search">⌕ <input class="bot-search" type="search" placeholder="Search bots" aria-label="Search bots"></label>
+              <div class="policy-lab">
+                <div class="policy-label">Test the opening rule</div>
+                <div class="segmented" role="group" aria-label="Collapse policy">
+                  <button data-policy="closed">All closed</button>
+                  <button class="active" data-policy="smart">Smart</button>
+                  <button data-policy="remember">Remembered</button>
+                </div>
+              </div>
+
+              <article class="machine" data-machine="Studio North" data-primary="true" data-attention="true" data-remembered="true" data-open="true">
+                <button class="machine-head" aria-expanded="true">
+                  <span class="health"></span>
+                  <span class="machine-name"><strong>Studio North <span class="primary-mark">★</span></strong><small>Ready · primary gateway</small></span>
+                  <span class="machine-meta"><strong>2 working</strong><small>9 bots · 1 unread</small></span>
+                  <span class="chevron">⌄</span>
+                </button>
+                <div class="machine-panel"><div><div class="machine-inner">
+                  <div class="section-label">Active</div>
+                  <div class="bot-row" data-search="frontier savant research">
+                    <span class="face purple triangle"></span>
+                    <span class="bot-copy"><strong>Frontier Savant <span class="tiny-dot"></span></strong><small>Researching the latest model release…</small></span>
+                    <span class="bot-state active">working<br>38s</span>
+                  </div>
+                  <div class="bot-row" data-search="gemma analyst local">
+                    <span class="face yellow cloud"></span>
+                    <span class="bot-copy"><strong>Gemma Analyst</strong><small>Reading 6 sources</small></span>
+                    <span class="bot-state active">working<br>2m</span>
+                  </div>
+                  <div class="section-label">Local models</div>
+                  <div class="bot-row" data-search="heretic qwen local">
+                    <span class="face yellow"></span>
+                    <span class="bot-copy"><strong>Heretic 9B</strong><small>Local agent on Qwen3</small></span>
+                    <span class="bot-state">12d</span>
+                  </div>
+                  <div class="bot-row" data-search="nemotron local">
+                    <span class="face cyan triangle"></span>
+                    <span class="bot-copy"><strong>Nemotron Lightning</strong><small>Tap to start a conversation</small></span>
+                    <span class="bot-state">idle</span>
+                  </div>
+                </div></div></div>
+              </article>
+
+              <article class="machine needs-attention" data-machine="Travel MacBook" data-attention="true" data-remembered="false" data-open="true">
+                <button class="machine-head" aria-expanded="true">
+                  <span class="health warn"></span>
+                  <span class="machine-name"><strong>Travel MacBook</strong><small>Waiting for approval</small></span>
+                  <span class="machine-meta"><strong style="color:var(--orange)">needs you</strong><small>4 bots · 1 request</small></span>
+                  <span class="chevron">⌄</span>
+                </button>
+                <div class="machine-panel"><div><div class="machine-inner">
+                  <div class="bot-row" data-search="release captain deploy approval">
+                    <span class="face coral drop"></span>
+                    <span class="bot-copy"><strong>Release Captain</strong><small>Approve deploy to production?</small></span>
+                    <span class="bot-state waiting">review</span>
+                  </div>
+                </div></div></div>
+              </article>
+
+              <article class="machine" data-machine="Office Mini" data-attention="false" data-remembered="true" data-open="false">
+                <button class="machine-head" aria-expanded="false">
+                  <span class="health"></span>
+                  <span class="machine-name"><strong>Office Mini</strong><small>Ready · last activity 3h</small></span>
+                  <span class="machine-meta"><strong>all quiet</strong><small>6 bots</small></span>
+                  <span class="chevron">⌄</span>
+                </button>
+                <div class="machine-panel"><div><div class="machine-inner">
+                  <div class="bot-row" data-search="ops observer office">
+                    <span class="face blue"></span>
+                    <span class="bot-copy"><strong>Ops Observer</strong><small>No recent activity</small></span>
+                    <span class="bot-state">3h</span>
+                  </div>
+                </div></div></div>
+              </article>
+
+              <article class="machine" data-machine="Render Tower" data-attention="true" data-remembered="false" data-open="true">
+                <button class="machine-head" aria-expanded="true">
+                  <span class="health off"></span>
+                  <span class="machine-name"><strong>Render Tower</strong><small>Offline · retrying in 18s</small></span>
+                  <span class="machine-meta"><strong style="color:var(--red)">offline</strong><small>5 cached bots</small></span>
+                  <span class="chevron">⌄</span>
+                </button>
+                <div class="machine-panel"><div><div class="machine-inner">
+                  <div class="bot-row" data-search="render scout cached offline" style="opacity:.56">
+                    <span class="face purple"></span>
+                    <span class="bot-copy"><strong>Render Scout</strong><small>Last seen yesterday</small></span>
+                    <span class="bot-state">1d</span>
+                  </div>
+                </div></div></div>
+              </article>
+            </div>
+            <div class="bottom-nav" aria-label="App navigation">
+              <button class="active"><span>◫</span>Fleet</button><button><span>◉</span>Chats</button><button><span>◎</span>Activity</button><button><span>⚙</span>Settings</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="direction" id="pulseboard">
+      <div class="direction-copy">
+        <div class="option-no">OPTION B · ACTION FIRST</div>
+        <h2>Pulseboard</h2>
+        <p class="subhead">Put “what needs me?” ahead of topology. A compact live rail carries working and waiting bots; every machine can safely start collapsed because its useful state remains visible.</p>
+        <ul class="tradeoffs">
+          <li>Fastest route to approvals, failures and active work.</li>
+          <li>Makes “all machines collapsed” viable, not merely tidy.</li>
+          <li>Feels alive without animating the entire roster.</li>
+          <li class="caution">Repeats active bots when a machine opens and consumes prime vertical space.</li>
+        </ul>
+        <div class="reaction-label">Your reaction</div>
+        <div class="reactions" data-option="Pulseboard">
+          <button class="react" aria-pressed="false">Love the pulse</button>
+          <button class="react" aria-pressed="false">Too busy</button>
+          <button class="react" aria-pressed="false">Merge with A</button>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="statusbar"><span>11:32</span><span>◉ ◒ 100%</span></div>
+            <div class="appbar"><div class="app-title">Bots</div><button class="icon-btn">◌</button><button class="icon-btn">＋</button><button class="icon-btn">⋮</button></div>
+            <div class="phone-body">
+              <label class="search">⌕ <input type="search" placeholder="Find a bot or machine" aria-label="Find a bot or machine"></label>
+              <div class="attention-card">
+                <span class="bar"></span><span><strong>Release Captain needs approval</strong><small>Travel MacBook · requested now</small></span><button class="demo-action">Review</button>
+              </div>
+              <div class="pulse-strip">
+                <div class="pulse-title"><span>Live across fleet</span><span>3 running</span></div>
+                <div class="pulse-cards">
+                  <div class="pulse-card"><div class="pulse-card-top"><span class="face small purple triangle"></span><span><strong>Frontier Savant</strong><small>Studio North</small></span></div><small>Researching model release…</small><div class="progress" style="--progress:72%"><i></i></div></div>
+                  <div class="pulse-card"><div class="pulse-card-top"><span class="face small yellow cloud"></span><span><strong>Gemma Analyst</strong><small>Studio North</small></span></div><small>Reading 6 sources</small><div class="progress" style="--progress:46%"><i></i></div></div>
+                  <div class="pulse-card"><div class="pulse-card-top"><span class="face small blue"></span><span><strong>Build Shepherd</strong><small>Office Mini</small></span></div><small>Running unit tests</small><div class="progress" style="--progress:84%"><i></i></div></div>
+                </div>
+              </div>
+
+              <div class="section-label">Machines</div>
+              <article class="machine" data-open="false">
+                <button class="machine-head" aria-expanded="false"><span class="health"></span><span class="machine-name"><strong>Studio North <span class="primary-mark">★</span></strong><small>Ready · 9 bots</small></span><span class="facepile"><span class="face small purple triangle"></span><span class="face small yellow cloud"></span></span><span class="chevron">⌄</span></button>
+                <div class="machine-panel"><div><div class="machine-inner"><div class="bot-row"><span class="face purple triangle"></span><span class="bot-copy"><strong>Frontier Savant</strong><small>Researching model release…</small></span><span class="bot-state active">38s</span></div></div></div></div>
+              </article>
+              <article class="machine needs-attention" data-open="false">
+                <button class="machine-head" aria-expanded="false"><span class="health warn"></span><span class="machine-name"><strong>Travel MacBook</strong><small>1 approval · 4 bots</small></span><span class="facepile"><span class="face small coral drop"></span></span><span class="chevron">⌄</span></button>
+                <div class="machine-panel"><div><div class="machine-inner"><div class="bot-row"><span class="face coral drop"></span><span class="bot-copy"><strong>Release Captain</strong><small>Approve deploy?</small></span><span class="bot-state waiting">review</span></div></div></div></div>
+              </article>
+              <article class="machine" data-open="false">
+                <button class="machine-head" aria-expanded="false"><span class="health"></span><span class="machine-name"><strong>Office Mini</strong><small>1 working · 6 bots</small></span><span class="facepile"><span class="face small blue"></span><span class="face small cyan triangle"></span></span><span class="chevron">⌄</span></button>
+                <div class="machine-panel"><div><div class="machine-inner"><div class="bot-row"><span class="face blue"></span><span class="bot-copy"><strong>Build Shepherd</strong><small>Running unit tests</small></span><span class="bot-state active">4m</span></div></div></div></div>
+              </article>
+              <article class="machine" data-open="false">
+                <button class="machine-head" aria-expanded="false"><span class="health off"></span><span class="machine-name"><strong>Render Tower</strong><small>Offline · 5 cached bots</small></span><span class="facepile"></span><span class="chevron">⌄</span></button>
+                <div class="machine-panel"><div><div class="machine-inner"></div></div></div>
+              </article>
+            </div>
+            <div class="bottom-nav"><button class="active"><span>◫</span>Fleet</button><button><span>◉</span>Chats</button><button><span>◎</span>Activity</button><button><span>⚙</span>Settings</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="direction" id="machine-deck">
+      <div class="direction-copy">
+        <div class="option-no">OPTION C · CALMEST</div>
+        <h2>Machine Deck</h2>
+        <p class="subhead">Replace nested accordions with a selected-machine lens. A swipeable machine switcher keeps one roster in view, reducing visual complexity for small and medium fleets.</p>
+        <ul class="tradeoffs">
+          <li>Cleanest bot-reading experience and strongest sense of place.</li>
+          <li>Removes the “collapsed by default” decision entirely.</li>
+          <li>Closest to the density of the current screen, so migration is gentle.</li>
+          <li class="caution">Cross-machine comparison and fleet-wide scanning require more switching.</li>
+        </ul>
+        <div class="reaction-label">Your reaction</div>
+        <div class="reactions" data-option="Machine Deck">
+          <button class="react" aria-pressed="false">Best clarity</button>
+          <button class="react" aria-pressed="false">Too hidden</button>
+          <button class="react" aria-pressed="false">Good alternate view</button>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="statusbar"><span>11:32</span><span>◉ ◒ 100%</span></div>
+            <div class="appbar"><div class="app-title">Fleet</div><button class="icon-btn">⌕</button><button class="icon-btn">＋</button><button class="icon-btn">⋮</button></div>
+            <div class="phone-body">
+              <div class="tab-row" role="tablist" aria-label="Choose machine">
+                <button class="machine-tab active" role="tab" aria-selected="true" data-deck="studio"><span class="health"></span>Studio North</button>
+                <button class="machine-tab" role="tab" aria-selected="false" data-deck="travel"><span class="health warn"></span>Travel MacBook <b style="color:var(--orange)">1</b></button>
+                <button class="machine-tab" role="tab" aria-selected="false" data-deck="office"><span class="health"></span>Office Mini</button>
+              </div>
+              <div class="deck-panel" data-panel="studio">
+                <div class="focus-hero"><span><h3>Studio North <span class="primary-mark">★</span></h3><p>READY · 9 BOTS · 2 WORKING</p></span><span class="facepile"><span class="face small purple triangle"></span><span class="face small yellow cloud"></span><span class="face small cyan triangle"></span></span></div>
+                <label class="search">⌕ <input type="search" placeholder="Search Studio North" aria-label="Search Studio North"></label>
+                <div class="flat-list">
+                  <div class="section-label">Working</div>
+                  <div class="bot-row"><span class="face purple triangle"></span><span class="bot-copy"><strong>Frontier Savant <span class="tiny-dot"></span></strong><small>Researching the latest model release…</small></span><span class="bot-state active">38s</span></div>
+                  <div class="bot-row"><span class="face yellow cloud"></span><span class="bot-copy"><strong>Gemma Analyst</strong><small>Reading 6 sources</small></span><span class="bot-state active">2m</span></div>
+                  <div class="section-label">Local models</div>
+                  <div class="bot-row"><span class="face yellow"></span><span class="bot-copy"><strong>Heretic 9B</strong><small>Local agent on Qwen3</small></span><span class="bot-state">12d</span></div>
+                  <div class="bot-row"><span class="face cyan triangle"></span><span class="bot-copy"><strong>Nemotron Lightning</strong><small>Tap to start a conversation</small></span><span class="bot-state">idle</span></div>
+                  <div class="bot-row"><span class="face purple"></span><span class="bot-copy"><strong>Nex 25</strong><small>Oregon is currently at Oklahoma State…</small></span><span class="bot-state">3d</span></div>
+                </div>
+              </div>
+              <div class="deck-panel" data-panel="travel" hidden>
+                <div class="focus-hero"><span><h3>Travel MacBook</h3><p>WAITING · 4 BOTS · 1 APPROVAL</p></span><span class="facepile"><span class="face small coral drop"></span></span></div>
+                <div class="attention-card"><span class="bar"></span><span><strong>Release Captain needs approval</strong><small>Deploy to production?</small></span><button class="demo-action">Review</button></div>
+                <div class="flat-list"><div class="bot-row"><span class="face coral drop"></span><span class="bot-copy"><strong>Release Captain</strong><small>Waiting for your decision</small></span><span class="bot-state waiting">review</span></div><div class="bot-row"><span class="face blue"></span><span class="bot-copy"><strong>Trip Planner</strong><small>Last active yesterday</small></span><span class="bot-state">1d</span></div></div>
+              </div>
+              <div class="deck-panel" data-panel="office" hidden>
+                <div class="focus-hero"><span><h3>Office Mini</h3><p>READY · 6 BOTS · 1 WORKING</p></span><span class="facepile"><span class="face small blue"></span><span class="face small cyan"></span></span></div>
+                <div class="flat-list"><div class="bot-row"><span class="face blue"></span><span class="bot-copy"><strong>Build Shepherd</strong><small>Running unit tests</small></span><span class="bot-state active">4m</span></div><div class="bot-row"><span class="face cyan"></span><span class="bot-copy"><strong>Ops Observer</strong><small>No recent activity</small></span><span class="bot-state">3h</span></div></div>
+              </div>
+            </div>
+            <div class="bottom-nav"><button class="active"><span>◫</span>Fleet</button><button><span>◉</span>Chats</button><button><span>◎</span>Activity</button><button><span>⚙</span>Settings</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="comparison" id="decision">
+      <div class="option-no">DECISION GUIDE</div>
+      <h2>Choose the operating model first.</h2>
+      <p>Color, spacing and animation can be tuned later. The durable choice is what the home screen optimizes for: topology, urgent work, or one-machine focus.</p>
+      <table class="decision-table">
+        <thead><tr><th>Direction</th><th>Best for</th><th>Default behavior</th><th>Fleet scale</th><th>Primary risk</th></tr></thead>
+        <tbody>
+          <tr><td class="winner">A · Smart Fleet ★</td><td>Everyday mixed use</td><td>Primary + attention open</td><td>3–12 machines</td><td>Nested hierarchy</td></tr>
+          <tr><td>B · Pulseboard</td><td>Operators / approvals</td><td>All machines closed</td><td>5–30 machines</td><td>Active-item duplication</td></tr>
+          <tr><td>C · Machine Deck</td><td>Focused conversations</td><td>Last machine selected</td><td>1–8 machines</td><td>Weak fleet overview</td></tr>
+        </tbody>
+      </table>
+      <div class="handoff">
+        <p><b>Recommended implementation sequence:</b> start with A’s hierarchy and state summaries, fix search so it truly searches only what it claims, and persist expansion by connection ID. If the real fleet grows beyond ~12 machines, add B’s pulse rail as an optional “Attention” view.</p>
+        <button class="reset-reactions">Clear reactions</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script>
+    const toast = document.querySelector('.toast');
+    let toastTimer;
+    function notify(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    document.querySelectorAll('[data-jump]').forEach(button => {
+      button.addEventListener('click', () => document.getElementById(button.dataset.jump).scrollIntoView({ behavior: 'smooth' }));
+    });
+
+    function setMachineOpen(machine, open) {
+      machine.dataset.open = String(open);
+      machine.querySelector('.machine-head').setAttribute('aria-expanded', String(open));
+    }
+
+    document.querySelectorAll('.machine-head').forEach(button => {
+      button.addEventListener('click', () => {
+        const machine = button.closest('.machine');
+        setMachineOpen(machine, machine.dataset.open !== 'true');
+      });
+    });
+
+    const smartPhone = document.querySelector('#smart-fleet .phone');
+    const policyButtons = smartPhone.querySelectorAll('[data-policy]');
+    policyButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        policyButtons.forEach(item => item.classList.toggle('active', item === button));
+        smartPhone.querySelectorAll('.machine').forEach(machine => {
+          const policy = button.dataset.policy;
+          const open = policy === 'smart'
+            ? machine.dataset.primary === 'true' || machine.dataset.attention === 'true'
+            : policy === 'remember'
+              ? machine.dataset.remembered === 'true'
+              : false;
+          setMachineOpen(machine, open);
+        });
+        notify(button.textContent.trim() + ' policy applied');
+      });
+    });
+
+    smartPhone.querySelector('.bot-search').addEventListener('input', event => {
+      const query = event.target.value.trim().toLowerCase();
+      smartPhone.querySelectorAll('.machine').forEach(machine => {
+        const rows = [...machine.querySelectorAll('.bot-row')];
+        let matches = 0;
+        rows.forEach(row => {
+          const hit = !query || (row.dataset.search || row.textContent).toLowerCase().includes(query);
+          row.hidden = !hit;
+          if (hit) matches++;
+        });
+        const machineHit = machine.dataset.machine.toLowerCase().includes(query);
+        machine.hidden = !!query && !matches && !machineHit;
+        if (query && (matches || machineHit)) setMachineOpen(machine, true);
+      });
+    });
+
+    document.querySelectorAll('.machine-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const phone = tab.closest('.phone');
+        phone.querySelectorAll('.machine-tab').forEach(item => {
+          const active = item === tab;
+          item.classList.toggle('active', active);
+          item.setAttribute('aria-selected', String(active));
+        });
+        phone.querySelectorAll('.deck-panel').forEach(panel => panel.hidden = panel.dataset.panel !== tab.dataset.deck);
+      });
+    });
+
+    document.querySelectorAll('.react').forEach(button => {
+      const group = button.closest('.reactions');
+      const key = 'hermes-gallery-' + group.dataset.option;
+      if (localStorage.getItem(key) === button.textContent) button.setAttribute('aria-pressed', 'true');
+      button.addEventListener('click', () => {
+        group.querySelectorAll('.react').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+        localStorage.setItem(key, button.textContent);
+        notify(group.dataset.option + ': “' + button.textContent + '” saved');
+      });
+    });
+
+    document.querySelectorAll('.demo-action').forEach(button => button.addEventListener('click', () => notify('Prototype only — this would open the approval.')));
+    document.querySelector('.reset-reactions').addEventListener('click', () => {
+      document.querySelectorAll('.reactions').forEach(group => localStorage.removeItem('hermes-gallery-' + group.dataset.option));
+      document.querySelectorAll('.react').forEach(button => button.setAttribute('aria-pressed', 'false'));
+      notify('Reactions cleared');
+    });
+  </script>
+</body>
+</html>

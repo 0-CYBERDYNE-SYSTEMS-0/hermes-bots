@@ -6,17 +6,24 @@ import ai.hermes.bots.data.MergedBot
 import ai.hermes.bots.protocol.SocketState
 import ai.hermes.bots.ui.components.FaceAvatar
 import ai.hermes.bots.ui.components.FaceState
-import ai.hermes.bots.ui.components.PulsingDot
-import ai.hermes.bots.ui.theme.BotAccent
 import ai.hermes.bots.ui.theme.Dimens
-import ai.hermes.bots.ui.theme.LocalBrandDark
+import ai.hermes.bots.ui.theme.HermesTheme
+import ai.hermes.bots.ui.theme.brandPalette
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,24 +32,23 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -72,15 +78,26 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Locale
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,15 +115,12 @@ fun RosterScreen(
 ) {
     val fleet by vm.merged.collectAsState()
     val avatars by vm.avatars.collectAsState()
-    val hasNotifications by vm.hasNotifications.collectAsState()
     val connections by vm.connections.collectAsState()
     val refreshing by vm.refreshing.collectAsState()
     val socketStates by vm.socketStates.collectAsState()
+    val expansionOverrides by vm.machineExpansionOverrides.collectAsState()
     val transientError by vm.transientError.collectAsState()
     val snackbar = remember { SnackbarHostState() }
-    // Resolved dark flag (in-app theme override wins over system) — per-bot accents (§3.1)
-    // must follow the same theme the user picked.
-    val darkTheme = LocalBrandDark.current
     var search by remember { mutableStateOf("") }
     var showHidden by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -124,44 +138,36 @@ fun RosterScreen(
 
     val hiddenCount = fleet.rows.count { it.hidden }
     val query = search.trim().lowercase(Locale.ROOT)
-    val visible = fleet.rows
+    val available = fleet.rows
         .filter { if (showHidden) it.hidden else !it.hidden }
-        .filter { m ->
-            if (query.isEmpty()) true
-            else m.name.lowercase(Locale.ROOT).contains(query) ||
-                (m.displayName ?: "").lowercase(Locale.ROOT).contains(query) ||
-                (m.primary.bot.description ?: "").lowercase(Locale.ROOT).contains(query) ||
-                (m.preview ?: "").lowercase(Locale.ROOT).contains(query)
+    fun botMatches(m: MergedBot): Boolean =
+        query.isEmpty() ||
+            m.name.lowercase(Locale.ROOT).contains(query) ||
+            (m.displayName ?: "").lowercase(Locale.ROOT).contains(query) ||
+            (m.primary.bot.description ?: "").lowercase(Locale.ROOT).contains(query) ||
+            (m.preview ?: "").lowercase(Locale.ROOT).contains(query)
+    val groups = FleetPresentation.groups(available, connections, socketStates)
+        .mapNotNull { group ->
+            if (query.isEmpty()) group
+            else if (group.connection.label.lowercase(Locale.ROOT).contains(query)) group
+            else group.copy(bots = group.bots.filter(::botMatches)).takeIf { it.bots.isNotEmpty() }
         }
-    // Rows are per-gateway: a chip appears only when the same bot name lives on several
-    // gateways, labeling which one this row is.
-    val collidedNames = fleet.rows
-        .groupBy { it.name.lowercase(Locale.ROOT) }
-        .filterValues { it.size > 1 }
-        .keys
-    fun chipLabel(m: MergedBot): String? =
-        if (m.name.lowercase(Locale.ROOT) !in collidedNames) null
-        else connections.firstOrNull { it.id == m.primary.bot.connectionId }?.label
-    val listed = visible.filterNot { it == fleet.pinnedAssistant }
-    val sections = listed.groupBy { it.sectionId }.toSortedMap(compareBy { it ?: "" })
+    fun machineLabel(m: MergedBot): String? =
+        connections.firstOrNull { it.id == m.primary.bot.connectionId }?.label
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Bots") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                title = {
+                    Text(
+                        "Fleet",
+                        style = HermesTheme.typography.screenTitle,
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 actions = {
-                    IconButton(onClick = { searchFocus.requestFocus() }) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search")
-                    }
-                    IconButton(onClick = onOpenNotifications) {
-                        BadgedBox(
-                            badge = { if (hasNotifications) Badge() },
-                        ) {
-                            Icon(Icons.Filled.Notifications, contentDescription = "Notifications")
-                        }
-                    }
                     IconButton(onClick = onNewBot) {
                         Icon(Icons.Filled.Add, contentDescription = "New bot")
                     }
@@ -195,199 +201,107 @@ fun RosterScreen(
             onRefresh = { vm.refresh() },
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
-            Column(Modifier.fillMaxSize().padding(horizontal = Dimens.GutterScreen)) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Column(
+                    Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .heightIn(min = 40.dp),
+                        .widthIn(max = 520.dp)
+                        .padding(horizontal = Dimens.ScreenGutter),
                 ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Filled.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        BasicTextField(
-                            value = search,
-                            onValueChange = { search = it },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurface,
-                            ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            modifier = Modifier
-                                .weight(1f)
-                                .focusRequester(searchFocus)
-                                .padding(vertical = 10.dp),
-                            decorationBox = { inner ->
-                                androidx.compose.foundation.layout.Box {
-                                    if (search.isEmpty()) {
-                                        Text(
-                                            "Search bots and group chats",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    inner()
-                                }
-                            },
-                        )
-                    }
-                }
-                val active = fleet.rows.filter { it.activeNow }
-                if (active.isNotEmpty()) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(
-                            "Active now",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                        )
+                    FleetSearchField(
+                        value = search,
+                        onValueChange = { search = it },
+                        focusRequester = searchFocus,
+                    )
+                    if (hiddenCount > 0) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                            horizontalArrangement = Arrangement.End,
                         ) {
-                            active.forEach { m ->
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .clip(MaterialTheme.shapes.medium)
-                                        .clickable {
-                                            vm.markRead(m.primary.bot.connectionId, m.name)
-                                            onOpenChat(m.primary.bot.connectionId, m.name)
-                                        }
-                                        .padding(4.dp),
-                                ) {
-                                    Box {
-                                        FaceAvatar(
-                                            m.name,
+                            FilterChip(
+                                selected = showHidden,
+                                onClick = { showHidden = !showHidden },
+                                label = { Text("Hidden ($hiddenCount)") },
+                            )
+                        }
+                    }
+                    if (groups.isEmpty()) {
+                        if (showHidden) {
+                            Text(
+                                if (query.isEmpty()) "No hidden bots" else "No hidden bots match “$search”",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(8.dp),
+                            )
+                        } else if (query.isNotEmpty()) {
+                            ai.hermes.bots.ui.components.EmptyState(
+                                title = "No matches",
+                                body = "No bots or machines match “$search”.",
+                            )
+                        } else if (connections.isNotEmpty() && connections.none { socketStates[it.id] is SocketState.Ready }) {
+                            // SV-17: gateways configured but none reachable — don't claim the
+                            // roster is empty, point the user at the thing they can fix.
+                            ai.hermes.bots.ui.components.EmptyState(
+                                title = "Can't reach your gateways right now.",
+                                body = "Your bots will appear as soon as a gateway connects.",
+                                cta = {
+                                    Button(onClick = onOpenGateways) { Text("Open Gateways") }
+                                },
+                            )
+                        } else {
+                            ai.hermes.bots.ui.components.EmptyState(
+                                title = "No bots yet",
+                                body = "Add one, or check Gateways.",
+                                avatar = {
+                                    androidx.compose.foundation.layout.Box(Modifier.size(96.dp)) {
+                                        ai.hermes.bots.ui.components.FaceAvatar(
+                                            "hermes-roster-a",
                                             56.dp,
-                                            real = avatars[avatarKey(m.primary.bot)],
-                                            state = FaceState.Working,
-                                            a11yLabel = "${m.displayName ?: m.name}, working",
+                                            modifier = Modifier.align(Alignment.CenterStart),
                                         )
-                                        PulsingDot(
-                                            dotSize = 12.dp,
-                                            color = BotAccent.color(m.name, darkTheme),
-                                            borderColor = MaterialTheme.colorScheme.background,
-                                            modifier = Modifier.align(Alignment.BottomEnd),
+                                        ai.hermes.bots.ui.components.FaceAvatar(
+                                            "hermes-roster-b",
+                                            56.dp,
+                                            modifier = Modifier.align(Alignment.Center),
+                                        )
+                                        ai.hermes.bots.ui.components.FaceAvatar(
+                                            "hermes-roster-c",
+                                            56.dp,
+                                            modifier = Modifier.align(Alignment.CenterEnd),
                                         )
                                     }
-                                    Text(
-                                        m.displayName ?: m.name,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.width(64.dp),
-                                    )
-                                }
-                            }
+                                },
+                            )
                         }
                     }
-                }
-                if (hiddenCount > 0) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.End,
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(bottom = Dimens.BottomContentClearance),
                     ) {
-                        FilterChip(
-                            selected = showHidden,
-                            onClick = { showHidden = !showHidden },
-                            label = { Text("Hidden ($hiddenCount)") },
-                        )
+                        items(groups, key = { it.connection.id }) { group ->
+                            val persisted = expansionOverrides[group.connection.id]
+                            val expanded = query.isNotEmpty() || FleetPresentation.isExpanded(group, persisted)
+                            MachineCard(
+                                group = group,
+                                expanded = expanded,
+                                avatars = avatars,
+                                onToggle = {
+                                    if (query.isEmpty()) {
+                                        vm.setMachineExpanded(group.connection.id, !expanded)
+                                    }
+                                },
+                                onOpenBot = { bot ->
+                                    vm.markRead(bot.primary.bot.connectionId, bot.name)
+                                    onOpenChat(bot.primary.bot.connectionId, bot.name)
+                                },
+                                onLongPressBot = { sheetFor = it },
+                            )
+                        }
                     }
                 }
-                if (visible.isEmpty()) {
-                    if (showHidden) {
-                        Text(
-                            "No hidden bots",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(8.dp),
-                        )
-                    } else if (connections.isNotEmpty() && connections.none { socketStates[it.id] is SocketState.Ready }) {
-                        // SV-17: gateways configured but none reachable — don't claim the
-                        // roster is empty, point the user at the thing they can fix.
-                        ai.hermes.bots.ui.components.EmptyState(
-                            title = "Can't reach your gateways right now.",
-                            body = "Your bots will appear as soon as a gateway connects.",
-                            cta = {
-                                Button(onClick = onOpenGateways) { Text("Open Gateways") }
-                            },
-                        )
-                    } else {
-                        ai.hermes.bots.ui.components.EmptyState(
-                            title = "No bots yet",
-                            body = "Add one, or check Gateways.",
-                            avatar = {
-                                androidx.compose.foundation.layout.Box(Modifier.size(96.dp)) {
-                                    ai.hermes.bots.ui.components.FaceAvatar(
-                                        "hermes-roster-a",
-                                        56.dp,
-                                        modifier = Modifier.align(Alignment.CenterStart),
-                                    )
-                                    ai.hermes.bots.ui.components.FaceAvatar(
-                                        "hermes-roster-b",
-                                        56.dp,
-                                        modifier = Modifier.align(Alignment.Center),
-                                    )
-                                    ai.hermes.bots.ui.components.FaceAvatar(
-                                        "hermes-roster-c",
-                                        56.dp,
-                                        modifier = Modifier.align(Alignment.CenterEnd),
-                                    )
-                                }
-                            },
-                        )
-                    }
-                }
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    fleet.pinnedAssistant?.takeIf { !showHidden || it.hidden }?.let { pinned ->
-                        item(key = "assistant-header") {
-                            ai.hermes.bots.ui.components.SectionHeader("Assistant")
-                        }
-                        item(key = "assistant-${pinned.primary.bot.connectionId}") {
-                            MergedBotRowItem(
-                                modifier = Modifier.animateItem(),
-                                bot = pinned,
-                                avatar = avatars[avatarKey(pinned.primary.bot)],
-                                chip = chipLabel(pinned),
-                                onClick = {
-                                    vm.markRead(pinned.primary.bot.connectionId, pinned.name)
-                                    onOpenChat(pinned.primary.bot.connectionId, pinned.name)
-                                },
-                                onLongClick = { sheetFor = pinned },
-                            )
-                        }
-                    }
-                    sections.forEach { (sectionId, bots) ->
-                        item(key = "header-${sectionId ?: "_"}") {
-                            ai.hermes.bots.ui.components.SectionHeader(
-                                sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots",
-                            )
-                        }
-                        itemsIndexed(bots, key = { _, m -> "${m.primary.bot.connectionId}:${m.name}" }) { _, m ->
-                            MergedBotRowItem(
-                                modifier = Modifier.animateItem(),
-                                bot = m,
-                                avatar = avatars[avatarKey(m.primary.bot)],
-                                chip = chipLabel(m),
-                                onClick = {
-                                    vm.markRead(m.primary.bot.connectionId, m.name)
-                                    onOpenChat(m.primary.bot.connectionId, m.name)
-                                },
-                                onLongClick = { sheetFor = m },
-                            )
-                        }
-                    }
-            }
             }
         }
     }
@@ -402,11 +316,10 @@ fun RosterScreen(
                     modifier = Modifier.padding(bottom = 8.dp),
                 ) {
                     FaceAvatar(
-                        m.displayName ?: m.name,
+                        m.name,
                         40.dp,
                         real = avatars[avatarKey(m.primary.bot)],
                         state = faceStateOf(m),
-                        a11yLabel = faceLabel(m),
                     )
                     Column {
                         Text(
@@ -416,7 +329,7 @@ fun RosterScreen(
                         Text(
                             buildString {
                                 append(m.sectionId?.replaceFirstChar { it.uppercase() } ?: "Bots")
-                                chipLabel(m)?.let { append(" · $it") }
+                                machineLabel(m)?.let { append(" · $it") }
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -448,7 +361,7 @@ fun RosterScreen(
                 )
                 ListItem(
                     headlineContent = { Text("Move to section…") },
-                    leadingContent = { Icon(Icons.Filled.List, contentDescription = null) },
+                    leadingContent = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                     modifier = Modifier.clickable { sectionFor = m; sheetFor = null },
                 )
             }
@@ -476,19 +389,310 @@ fun RosterScreen(
 
 private fun avatarKey(bot: BotRow): String = "${bot.connectionId}:${bot.name}"
 
-// Checklist 13: every face carries a11y text "{name}, {state}"; the drawn blink/pose is
-// decorative and excluded from the a11y tree (FaceAvatar handles that when a11yLabel == null).
-private fun faceStateOf(bot: MergedBot): FaceState =
-    if (bot.activeNow) FaceState.Working else FaceState.Idle
-
-private fun faceLabel(bot: MergedBot): String {
-    val name = bot.displayName ?: bot.name
-    return when {
-        bot.activeNow -> "$name, working"
-        bot.unread -> "$name, unread"
-        else -> "$name, idle"
+@Composable
+private fun FleetSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    focusRequester: FocusRequester,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val colors = HermesTheme.colors
+    val shape = RoundedCornerShape(17.dp)
+    Surface(
+        shape = shape,
+        color = colors.surfaceInput,
+        border = if (focused) BorderStroke(1.dp, colors.primary) else null,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 5.dp, bottom = 13.dp)
+            .heightIn(min = 48.dp),
+    ) {
+        Row(
+            Modifier.padding(start = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = colors.textDim,
+            )
+            Spacer(Modifier.width(9.dp))
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { focused = it.isFocused }
+                    .padding(vertical = 12.dp),
+                decorationBox = { inner ->
+                    Box {
+                        if (value.isEmpty()) {
+                            Text(
+                                "Search bots or machines",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.textMuted,
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
+            if (value.isNotEmpty()) {
+                IconButton(onClick = { onValueChange("") }) {
+                    Icon(
+                        Icons.Filled.Clear,
+                        contentDescription = "Clear search",
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            } else {
+                Spacer(Modifier.width(13.dp))
+            }
+        }
     }
 }
+
+@Composable
+private fun MachineCard(
+    group: MachineGroup,
+    expanded: Boolean,
+    avatars: Map<String, AvatarImage>,
+    onToggle: () -> Unit,
+    onOpenBot: (MergedBot) -> Unit,
+    onLongPressBot: (MergedBot) -> Unit,
+) {
+    val assistant = group.bots.filter {
+        group.isPrimary && it.name.equals(DEFAULT_ASSISTANT_NAME, ignoreCase = true)
+    }
+    val active = group.bots.filter { it !in assistant && it.activeNow }
+    val remaining = group.bots.filter { it !in assistant && it !in active }
+    val sections = buildList {
+        if (assistant.isNotEmpty()) add("Assistant" to assistant)
+        if (active.isNotEmpty()) add("Active" to active)
+        val grouped = remaining.groupBy { it.sectionId }
+        grouped.filterKeys { it != null }.forEach { (sectionId, bots) ->
+            add(sectionId!!.replaceFirstChar { it.uppercase() } to bots)
+        }
+        grouped[null]?.let { bots -> add("Bots" to bots) }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(19.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column {
+            MachineHeader(group = group, expanded = expanded, onToggle = onToggle)
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(
+                    animationSpec = tween(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 240 else 0),
+                ) + fadeIn(animationSpec = tween(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 160 else 0)),
+                exit = shrinkVertically(
+                    animationSpec = tween(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 240 else 0),
+                ) + fadeOut(animationSpec = tween(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 120 else 0)),
+            ) {
+                Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 9.dp)) {
+                    sections.forEach { (label, bots) ->
+                        FleetSectionLabel(label)
+                        bots.forEach { bot ->
+                            MergedBotRowItem(
+                                bot = bot,
+                                avatar = avatars[avatarKey(bot.primary.bot)],
+                                onClick = { onOpenBot(bot) },
+                                onLongClick = { onLongPressBot(bot) },
+                                offline = group.state !is SocketState.Ready,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MachineHeader(
+    group: MachineGroup,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val ready = group.state is SocketState.Ready
+    val success = brandPalette().success
+    val stateColor = when (group.state) {
+        is SocketState.Ready -> success
+        SocketState.Connecting -> MaterialTheme.colorScheme.secondary
+        is SocketState.Disconnected, SocketState.Idle -> HermesTheme.colors.textDim
+    }
+    val lastActive = group.bots.mapNotNull { it.lastActiveMs }.maxOrNull()
+    val botLabel = "${group.botCount} ${if (group.botCount == 1) "bot" else "bots"}"
+    val secondary = when (group.state) {
+        is SocketState.Ready -> if (group.isPrimary) "Ready · primary gateway"
+        else lastActive?.let { "Ready · last activity ${relativeTime(it)}" } ?: "Ready"
+        SocketState.Connecting -> "Connecting…"
+        is SocketState.Disconnected, SocketState.Idle ->
+            lastActive?.let { "Offline · last seen ${relativeTime(it)}" } ?: "Offline"
+    }
+    val summaryStrong = when {
+        !ready -> if (group.state is SocketState.Connecting) "connecting" else "offline"
+        group.activeCount > 0 -> "${group.activeCount} working"
+        else -> "all quiet"
+    }
+    val summaryDetail = buildList {
+        add(
+            when {
+                ready && group.botCount > 0 -> botLabel
+                ready -> "No bots"
+                group.botCount > 0 -> "${group.botCount} cached ${if (group.botCount == 1) "bot" else "bots"}"
+                else -> "No cached bots"
+            },
+        )
+        if (ready && group.unreadCount > 0) add("${group.unreadCount} unread")
+    }.joinToString(" · ")
+    val summaryColor = when {
+        !ready && group.state !is SocketState.Connecting -> MaterialTheme.colorScheme.error
+        group.unreadCount > 0 -> HermesTheme.colors.attention
+        group.activeCount > 0 -> success
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 220 else 0),
+        label = "machine-chevron",
+    )
+    val compact = LocalConfiguration.current.screenWidthDp < 360 || LocalDensity.current.fontScale > 1.3f
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clickable(onClick = onToggle)
+            .semantics {
+                role = Role.Button
+                stateDescription = if (expanded) "Expanded" else "Collapsed"
+                contentDescription = buildString {
+                    append(group.connection.label)
+                    append(", ")
+                    append(secondary)
+                    append(", ")
+                    append(summaryStrong)
+                    append(", ")
+                    append(summaryDetail)
+                    if (group.isPrimary) append(", primary gateway")
+                }
+            }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.size(12.dp), contentAlignment = Alignment.Center) {
+            if (ready || group.state is SocketState.Connecting) {
+                Box(
+                    Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(stateColor.copy(alpha = 0.09f)),
+                )
+            }
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(stateColor),
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    group.connection.label,
+                    style = HermesTheme.typography.machineName,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (group.isPrimary) {
+                    Icon(
+                        Icons.Filled.Star,
+                        contentDescription = "Primary gateway",
+                        tint = HermesTheme.colors.primaryMachine,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
+            Text(
+                secondary,
+                style = HermesTheme.typography.metadata,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (compact) {
+                Text(
+                    summaryStrong,
+                    style = HermesTheme.typography.metadataStrong,
+                    color = summaryColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    summaryDetail,
+                    style = HermesTheme.typography.metadata,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (!compact) {
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    summaryStrong,
+                    style = HermesTheme.typography.metadataStrong,
+                    color = summaryColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    summaryDetail,
+                    style = HermesTheme.typography.metadata,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Icon(
+            Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = rotation },
+        )
+    }
+}
+
+@Composable
+private fun FleetSectionLabel(label: String) {
+    Text(
+        label.uppercase(Locale.ROOT),
+        style = HermesTheme.typography.eyebrow,
+        color = HermesTheme.colors.textDim,
+        modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
+    )
+}
+
+private fun faceStateOf(bot: MergedBot): FaceState =
+    if (bot.activeNow) FaceState.Working else FaceState.Idle
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -499,13 +703,15 @@ private fun MergedBotRowItem(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     chip: String? = null,
+    offline: Boolean = false,
 ) {
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val darkTheme = LocalBrandDark.current
     Row(
         modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.medium)
+            .heightIn(min = 58.dp)
+            .alpha(if (offline || bot.hidden) 0.56f else 1f)
+            .clip(RoundedCornerShape(13.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = {
@@ -513,67 +719,68 @@ private fun MergedBotRowItem(
                     onLongClick()
                 },
             )
-            .padding(vertical = 8.dp, horizontal = 4.dp),
+            .padding(7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box {
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
             FaceAvatar(
                 bot.name,
-                48.dp,
+                36.dp,
                 real = avatar,
                 state = faceStateOf(bot),
-                a11yLabel = faceLabel(bot),
             )
-            if (bot.unread) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.secondary),
-                )
-            }
-            // Presence lives ON the avatar (A3): working = pulsing per-bot accent dot (§3.1,
-            // not brand chrome); idle = nothing. The unread dot above stays burnt orange.
-            if (bot.activeNow) {
-                PulsingDot(
-                    dotSize = 12.dp,
-                    color = BotAccent.color(bot.name, darkTheme),
-                    borderColor = MaterialTheme.colorScheme.background,
-                    modifier = Modifier.align(Alignment.BottomEnd),
-                )
-            }
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     bot.displayName ?: bot.name,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = HermesTheme.typography.botName,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                if (bot.unread) {
+                    Box(
+                        Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(HermesTheme.colors.attention)
+                            .semantics { contentDescription = "Unread" },
+                    )
+                }
                 // Multi-gateway presence: primary's label + how many more host this bot.
                 chip?.let { ai.hermes.bots.ui.components.ConnectionChip(it) }
             }
             Text(
                 (bot.preview ?: "Tap to start the conversation")
                     .replace('*', ' ').replace('`', '\''),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (bot.unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = HermesTheme.typography.bodySmall,
+                color = if (bot.unread) HermesTheme.colors.text else HermesTheme.colors.textMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.width(Dimens.GapSm))
         Column(horizontalAlignment = Alignment.End) {
+            if (bot.activeNow) {
+                Text(
+                    "working",
+                    style = HermesTheme.typography.metadataStrong,
+                    color = brandPalette().success,
+                )
+            }
             Text(
-                bot.lastActiveMs?.let { relativeTime(it) } ?: "",
-                style = MaterialTheme.typography.labelSmall,
+                bot.lastActiveMs?.let { relativeTime(it) } ?: if (bot.activeNow) "now" else "idle",
+                style = HermesTheme.typography.metadata,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (bot.activeNow) {
-                Text("active", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            if (!bot.activeNow && bot.unread) {
+                Text(
+                    "unread",
+                    style = HermesTheme.typography.metadataStrong,
+                    color = HermesTheme.colors.attention,
+                )
             }
         }
     }

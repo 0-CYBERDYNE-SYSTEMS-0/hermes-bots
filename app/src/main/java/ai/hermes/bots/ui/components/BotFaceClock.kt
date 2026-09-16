@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 
 /**
  * The one shared 15 fps face clock (UI-SPEC.md §3.2): a process-wide object owning a SINGLE
- * animation loop. While at least one face is observing, it emits a quantized wall-clock tick
+ * animation loop. While at least one face is observing, it emits a quantized monotonic tick
  * every 66 ms (1000/15 ≈ 66 ms, the spec's quantization budget) on Dispatchers.Main; with
  * zero observers the loop stops, so off-screen faces cost nothing and no face ever runs a
  * per-row ticker. Faces collect [tick] (via [rememberTick]) and pose from it ([isBlinking]).
@@ -39,9 +39,9 @@ object BotFaceClock {
   private const val IDLE_PERIOD_MS: Long = 3200L
   private const val IDLE_ONSET_MS: Long = 3020L
 
-  private val _tick = MutableStateFlow(System.currentTimeMillis())
+  private val _tick = MutableStateFlow(System.nanoTime() / 1_000_000L)
 
-  /** Quantized wall-clock milliseconds; advances every [INTERVAL_MS] while observers > 0. */
+  /** Quantized monotonic milliseconds; advances every [INTERVAL_MS] while observers > 0. */
   val tick: StateFlow<Long> = _tick
 
   private var observers = 0
@@ -51,7 +51,7 @@ object BotFaceClock {
   }
 
   /**
-   * True when the face should render its eyes closed at wall-clock [tMs]. Pure, deterministic,
+   * True when the face should render its eyes closed at monotonic time [tMs]. Pure, deterministic,
    * and side-effect free (no clock reads, no Android imports): the same tick always yields the
    * same answer. Working faces blink on the short 1.45 s window, idle faces on the lazy 3.2 s
    * one (~0.4 s blend feel per the spec).
@@ -67,7 +67,7 @@ object BotFaceClock {
       loop = scope.launch {
         while (isActive) {
           delay(INTERVAL_MS)
-          _tick.value = System.currentTimeMillis()
+          _tick.value = System.nanoTime() / 1_000_000L
         }
       }
     }

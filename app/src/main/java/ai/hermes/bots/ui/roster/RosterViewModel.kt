@@ -47,6 +47,13 @@ class RosterViewModel(app: Application) : AndroidViewModel(app) {
     val connections: StateFlow<List<ConnectionRecord>> = graph.connections.connections
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Explicit Fleet machine disclosure choices, keyed by stable connection ID. */
+    val machineExpansionOverrides: StateFlow<Map<String, Boolean>> = graph.settings.machineExpansionOverrides
+
+    fun setMachineExpanded(connectionId: String, expanded: Boolean) {
+        viewModelScope.launch { graph.settings.setMachineExpanded(connectionId, expanded) }
+    }
+
     /** SV-14: bell badge only while a history entry is newer than the seen watermark. */
     val hasNotifications: StateFlow<Boolean> = combine(
         graph.settings.notificationHistory,

@@ -5,19 +5,25 @@ import ai.hermes.bots.data.AvatarImage
 import ai.hermes.bots.data.NotificationEntry
 import ai.hermes.bots.data.RosterEntry
 import ai.hermes.bots.data.SettingsRepository
+import ai.hermes.bots.ui.theme.Dimens
+import ai.hermes.bots.ui.theme.HermesTheme
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
@@ -47,7 +53,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -125,7 +134,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenGateways: () -> Unit,
     vm: SettingsViewModel = viewModel(
         factory = viewModelFactory {
@@ -139,6 +148,8 @@ fun SettingsScreen(
     val themeMode by vm.themeMode.collectAsState()
     val notificationsEnabled by vm.notificationsEnabled.collectAsState()
     val context = LocalContext.current
+    val stackAppearanceOptions = LocalConfiguration.current.screenWidthDp < 360 ||
+        LocalDensity.current.fontScale > 1.3f
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var importing by remember { mutableStateOf(false) }
@@ -160,105 +171,117 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-                title = { Text("Settings") },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = { Text("Settings", style = HermesTheme.typography.screenTitle) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    onBack?.let { callback ->
+                        IconButton(onClick = callback) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
                 },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        containerColor = HermesTheme.colors.canvas,
     ) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        Box(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            Text(
-                "Appearance",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = themeMode == SettingsRepository.THEME_SYSTEM,
-                    onClick = { vm.setThemeMode(SettingsRepository.THEME_SYSTEM) },
-                    label = { Text("System") },
-                )
-                FilterChip(
-                    selected = themeMode == SettingsRepository.THEME_DARK,
-                    onClick = { vm.setThemeMode(SettingsRepository.THEME_DARK) },
-                    label = { Text("Dark") },
-                )
-                FilterChip(
-                    selected = themeMode == SettingsRepository.THEME_LIGHT,
-                    onClick = { vm.setThemeMode(SettingsRepository.THEME_LIGHT) },
-                    label = { Text("Light") },
-                )
-            }
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text(
-                "Notifications",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = Dimens.ScreenGutter)
+                    .padding(bottom = Dimens.BottomContentClearance),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Bot notifications", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Notify when a bot finishes while the app is backgrounded",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Text(
+                    "Appearance",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                AppearanceChips(
+                    themeMode = themeMode,
+                    stacked = stackAppearanceOptions,
+                    onSelect = vm::setThemeMode,
+                )
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Notifications",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Bot notifications", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Notify when a bot finishes while the app is backgrounded",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = notificationsEnabled,
+                        onCheckedChange = { vm.setNotificationsEnabled(it) },
                     )
                 }
-                Switch(
-                    checked = notificationsEnabled,
-                    onCheckedChange = { vm.setNotificationsEnabled(it) },
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Fleet config",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ListItem(
+                    headlineContent = { Text("Share my gateways") },
+                    supportingContent = { Text("Copy every gateway — sign-ins included — so another phone can join the fleet") },
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        scope.launch {
+                            val json = vm.exportJson()
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TITLE, "Hermes fleet config")
+                                putExtra(Intent.EXTRA_TEXT, json)
+                            }
+                            context.startActivity(Intent.createChooser(send, "Share fleet config"))
+                        }
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("Add gateways from a config") },
+                    supportingContent = { Text("Paste a shared fleet config, or pick its file — duplicates are skipped") },
+                    modifier = Modifier.fillMaxWidth().clickable { importing = true },
+                )
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Gateways",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ListItem(
+                    headlineContent = { Text("Manage gateways") },
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenGateways),
+                )
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Open source",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Blobatar © 2026 Alain · MIT License",
+                    style = HermesTheme.typography.bodySmall,
+                    color = HermesTheme.colors.textMuted,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text(
-                "Fleet config",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            ListItem(
-                headlineContent = { Text("Share my gateways") },
-                supportingContent = { Text("Copy every gateway — sign-ins included — so another phone can join the fleet") },
-                modifier = Modifier.fillMaxWidth().clickable {
-                    scope.launch {
-                        val json = vm.exportJson()
-                        val send = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TITLE, "Hermes fleet config")
-                            putExtra(Intent.EXTRA_TEXT, json)
-                        }
-                        context.startActivity(Intent.createChooser(send, "Share fleet config"))
-                    }
-                },
-            )
-            ListItem(
-                headlineContent = { Text("Add gateways from a config") },
-                supportingContent = { Text("Paste a shared fleet config, or pick its file — duplicates are skipped") },
-                modifier = Modifier.fillMaxWidth().clickable { importing = true },
-            )
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text(
-                "Gateways",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            ListItem(
-                headlineContent = { Text("Manage gateways") },
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenGateways),
-            )
         }
     }
 
@@ -279,6 +302,41 @@ fun SettingsScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun AppearanceChips(
+    themeMode: String,
+    stacked: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    val options = listOf(
+        SettingsRepository.THEME_SYSTEM to "System",
+        SettingsRepository.THEME_DARK to "Dark",
+        SettingsRepository.THEME_LIGHT to "Light",
+    )
+    if (stacked) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            options.forEach { (mode, label) ->
+                FilterChip(
+                    selected = themeMode == mode,
+                    onClick = { onSelect(mode) },
+                    label = { Text(label) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { (mode, label) ->
+                FilterChip(
+                    selected = themeMode == mode,
+                    onClick = { onSelect(mode) },
+                    label = { Text(label) },
+                )
+            }
+        }
     }
 }
 

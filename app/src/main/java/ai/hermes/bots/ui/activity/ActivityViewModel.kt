@@ -23,6 +23,8 @@ class ActivityViewModel(app: Application) : AndroidViewModel(app) {
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
   val jobs = graph.cron.jobs
   val history = graph.settings.notificationHistory
+  val connectionLabels = graph.connections.connections
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
   private val _error = MutableStateFlow<String?>(null)
   val error: StateFlow<String?> = _error

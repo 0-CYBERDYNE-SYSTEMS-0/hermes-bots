@@ -39,7 +39,8 @@ permissions, no new dependencies. That is the P0 tier this spec implements.
 ### 1. Links (`MarkdownText.kt`)
 
 - New token types in the line annotator: `[label](url)` markdown links and bare
-  `https?://…` autolinks (trailing punctuation `.,;:!?` and unbalanced `)` trimmed).
+  `https?://…` autolinks. Boundary rules live in the pure `data/Linkify.kt` helper:
+  trailing punctuation `.,;:!?"'` and unbalanced `)` are trimmed, balanced parens are kept.
 - Links never detected inside inline code spans.
 - Rendered with Compose 1.7 `LinkAnnotation.Url` + `withLink`: theme primary color,
   underline, tap routed through a `linkInteractionListener` that calls `LocalUriHandler`
@@ -72,15 +73,17 @@ permissions, no new dependencies. That is the P0 tier this spec implements.
 ### 4. Inline diffs (new `data/DiffText.kt` + `ToolChip`)
 
 - `DiffText.extract(payload)` tolerates the unpinned wire shape: JSON string → text;
-  object → first non-blank of `diff`/`patch`/`text`; array → join of extracted elements.
+  object → first non-blank of `diff`, then `patch`, then `text` (priority order, not JSON
+  order); array → join of extracted elements.
 - `DiffText.parse(raw, maxLines)` classifies unified-diff lines into
   FILE (`---`/`+++`), META (`diff `/`index `), HUNK (`@@`), ADD, DEL, CONTEXT and reports
-  truncation past the cap.
+  truncation past the cap. `DiffText.addedRemoved(raw)` yields the collapsed badge counts.
 - UI: red/green monospace rows inside the existing expandable ToolChip (research §4.6).
-  Collapsed chip shows a short preview; the existing "Show all" toggle reveals the capped
-  full diff. ADD = tertiary-on-tertiaryContainer, DEL = error-on-errorContainer (low alpha),
-  HUNK = primary, FILE/META = muted. The chip is expandable when a diff exists even if the
-  tool has no other text.
+  The collapsed chip face carries a Cursor-style `+N −M` badge as its preview; expanding
+  renders the rows, with a short preview set before the existing "Show all" toggle reveals
+  the capped full diff. ADD = tertiary-on-tertiaryContainer, DEL = error-on-errorContainer
+  (low alpha), HUNK = primary, FILE/META = muted. The chip is expandable when a diff exists
+  even if the tool has no other text.
 
 ### 5. Todo checklist (new `data/TodoState.kt` + `ChatScreen`)
 
@@ -114,6 +117,8 @@ permissions, no new dependencies. That is the P0 tier this spec implements.
 - `CodeDisplayTest` — alias mapping; tokenizer spans for kotlin/python/bash/json (strings,
   escapes, `//` and `#` comments, block comments, keywords, numbers); unknown language
   fallback; >20 000-char guard.
+- `LinkifyTest` — markdown-link matching at a position; bare-URL end boundaries (trailing
+  punctuation, unbalanced vs balanced parens, angle-bracket stop, too-short URL rejection).
 - `DiffTextTest` — classification of a real-shaped unified diff; cap + truncated flag;
   tolerant `extract` for string/object/array/null payloads.
 - `TodoStateTest` — array payload; `{todos: […]}` wrapper; status mapping incl. unknown

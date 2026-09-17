@@ -25,16 +25,24 @@ object DiffText {
     fun extract(payload: JsonElement?): String? = when (payload) {
         null, is JsonNull -> null
         is JsonPrimitive -> payload.content.takeIf { it.isNotBlank() }
-        is JsonObject -> payload.entries.asSequence()
-            .filter { it.key in DIFF_KEYS }
-            .mapNotNull { extract(it.value) }
-            .firstOrNull()
+        is JsonObject -> DIFF_KEYS.firstNotNullOfOrNull { key -> extract(payload[key]) }
         is JsonArray -> payload.asSequence()
             .mapNotNull { extract(it) }
             .filter { it.isNotBlank() }
             .joinToString("\n\n")
             .ifBlank { null }
         else -> null
+    }
+
+    /** +added / −removed counts over the whole diff — the collapsed chip's face badge. */
+    fun addedRemoved(raw: String): Pair<Int, Int> {
+        var added = 0
+        var removed = 0
+        for (line in splitBody(raw)) when {
+            line.startsWith("+") && !line.startsWith("+++") -> added++
+            line.startsWith("-") && !line.startsWith("---") -> removed++
+        }
+        return added to removed
     }
 
     /** Classify lines and cap the result; [ParseResult.truncated] reports the cap bit. */
@@ -62,7 +70,8 @@ object DiffText {
     private fun splitBody(raw: String): List<String> =
         if (raw.endsWith("\n")) raw.lines().dropLast(1) else raw.lines()
 
-    private val DIFF_KEYS = setOf("diff", "patch", "text")
+    /** Priority order, not JSON order: a payload with both keys yields the diff. */
+    private val DIFF_KEYS = listOf("diff", "patch", "text")
 
     data class ParseResult(val lines: List<DiffLine>, val truncated: Boolean)
 }

@@ -152,7 +152,8 @@ fun ChatComposer(
       if (isStreaming) {
         Row(verticalAlignment = Alignment.CenterVertically) {
           if (canSubmit) {
-            IconButton(onClick = onSteer, modifier = Modifier.size(40.dp)) {
+            // 48 dp target (fleet-pulse-ui-spec §2); the 32 dp circle is the visual only.
+            IconButton(onClick = onSteer, modifier = Modifier.size(48.dp)) {
               Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.secondaryContainer,

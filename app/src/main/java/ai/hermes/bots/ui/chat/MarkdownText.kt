@@ -3,6 +3,7 @@ package ai.hermes.bots.ui.chat
 import ai.hermes.bots.data.CodeLanguages
 import ai.hermes.bots.data.CodeTokenKind
 import ai.hermes.bots.data.CodeTokenizer
+import ai.hermes.bots.data.Linkify
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -103,7 +104,7 @@ private fun CodeBlock(segment: Segment.Code) {
             }
         }
     }
-    val scrollState = rememberScrollState(segment.body.length)
+    val scrollState = rememberScrollState()
     Column(
         Modifier
             .fillMaxWidth()
@@ -193,9 +194,6 @@ private fun splitFences(text: String): List<Segment> {
     }
 }
 
-private val markdownLink = Regex("\\[([^\\]\n]+)]\\(([^()\\s]+)\\)")
-private val urlTailTrim = charArrayOf('.', ',', ';', ':', '!', '?', '"', '\'', '>')
-
 private fun annotate(
     text: String,
     linkStyle: SpanStyle,
@@ -249,24 +247,20 @@ private fun annotate(
                     }
                 }
                 work[pos] == '[' -> {
-                    val m = markdownLink.matchAt(work, pos)
-                    if (m != null) {
+                    val link = Linkify.markdownLinkAt(work, pos)
+                    if (link != null) {
                         append(work.substring(cursor, pos))
                         withLink(
-                            LinkAnnotation.Url(m.groupValues[2], TextLinkStyles(linkStyle), linkListener),
-                        ) { append(m.groupValues[1]) }
-                        cursor = pos + m.value.length
+                            LinkAnnotation.Url(link.url, TextLinkStyles(linkStyle), linkListener),
+                        ) { append(link.label) }
+                        cursor = link.endExclusive
                         pos = cursor
                         continue
                     }
                 }
                 work.startsWith("http://", pos) || work.startsWith("https://", pos) -> {
-                    var end = pos
-                    while (end < work.length && !work[end].isWhitespace() && work[end] !in "<>") end++
-                    // Trailing sentence punctuation isn't part of the URL.
-                    while (end > pos && work[end - 1] in urlTailTrim) end--
-                    if (end > pos && work[end - 1] == ')' && work.indexOf('(', pos) < 0) end--
-                    if (end > pos + "https://".length) {
+                    val end = Linkify.bareUrlEnd(work, pos)
+                    if (end > pos) {
                         append(work.substring(cursor, pos))
                         val url = work.substring(pos, end)
                         withLink(

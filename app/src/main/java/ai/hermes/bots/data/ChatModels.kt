@@ -241,7 +241,9 @@ object ChatStream {
 
   /**
    * Optimistic steer echo: a user-side bubble with the ↗ marker so the user sees exactly
-   * what was injected mid-turn (session.steer itself streams no user-visible ack).
+   * what was injected mid-turn (session.steer itself streams no user-visible ack). The line
+   * is never doubled: no user-message event type is consumed live, and a reload rebuilds
+   * the transcript from server history alone (the ↗ marker is client-side only).
    */
   fun steerEcho(items: List<ChatItem>, text: String, nextId: () -> String): List<ChatItem> {
     if (text.isBlank()) return items

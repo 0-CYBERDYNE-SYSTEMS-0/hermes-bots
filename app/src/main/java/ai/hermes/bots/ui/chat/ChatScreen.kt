@@ -61,6 +61,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Warning
@@ -88,6 +89,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -100,10 +102,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
@@ -746,6 +751,24 @@ private fun ToolChip(item: ChatItem) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    // Agent-ux P0 (spec §4): the collapsed chip's diff preview is a
+                    // Cursor-style +N −M badge; the rows themselves render when expanded.
+                    item.inlineDiff?.let { raw ->
+                        val (added, removed) = remember(item.id, raw) { DiffText.addedRemoved(raw) }
+                        Text(
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.tertiary)) {
+                                    append("+$added")
+                                }
+                                append("  ")
+                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.error)) {
+                                    append("−$removed")
+                                }
+                            },
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                     if (expandable) {
                         Spacer(Modifier.weight(1f))
                         Text(
@@ -875,7 +898,8 @@ private fun DiffView(raw: String, expandedAll: Boolean) {
  */
 @Composable
 private fun TodoCard(items: List<TodoItem>) {
-    var collapsed by remember { mutableStateOf(false) }
+    // Saveable: collapse survives rotation like every other screen-level UI state.
+    var collapsed by rememberSaveable { mutableStateOf(false) }
     val done = items.count { it.status == TodoStatus.DONE }
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -902,10 +926,11 @@ private fun TodoCard(items: List<TodoItem>) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.weight(1f))
-                Text(
-                    if (collapsed) "▸" else "▾",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Icon(
+                    if (collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (collapsed) "Expand" else "Collapse",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (!collapsed) {
@@ -975,7 +1000,8 @@ private fun ApprovalCardView(
                     modifier = Modifier.weight(1f),
                 )
                 if (onDismiss != null) {
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                    // 48 dp target (fleet-pulse-ui-spec §2); the icon is the visual only.
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = "Dismiss",

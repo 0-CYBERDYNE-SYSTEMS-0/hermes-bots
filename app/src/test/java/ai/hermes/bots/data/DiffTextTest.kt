@@ -80,6 +80,25 @@ class DiffTextTest {
     }
 
     @Test
+    fun `extract prefers diff over patch over text regardless of key order`() {
+        assertEquals(
+            "the diff",
+            DiffText.extract(Json.parseToJsonElement("""{"text": "t", "diff": "the diff"}""")),
+        )
+        assertEquals(
+            "the patch",
+            DiffText.extract(Json.parseToJsonElement("""{"text": "t", "patch": "the patch"}""")),
+        )
+    }
+
+    @Test
+    fun `addedRemoved counts the whole diff and skips file headers`() {
+        assertEquals(1 to 1, DiffText.addedRemoved(sample))
+        val bigger = "$sample\n+second\n-removed too\n"
+        assertEquals(2 to 2, DiffText.addedRemoved(bigger))
+    }
+
+    @Test
     fun `extract tolerates absent or junk payloads`() {
         assertNull(DiffText.extract(null))
         assertNull(DiffText.extract(Json.parseToJsonElement("null")))

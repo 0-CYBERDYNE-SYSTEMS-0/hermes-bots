@@ -72,7 +72,8 @@ fun ErrorLine(
             color = MaterialTheme.colorScheme.error,
           )
           if (onDismiss != null) {
-            IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+            // 48 dp target (fleet-pulse-ui-spec §2); the icon is the visual only.
+            IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
               Icon(
                 Icons.Filled.Close,
                 contentDescription = "Dismiss",

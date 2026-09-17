@@ -3,12 +3,14 @@ package ai.hermes.bots.ui.chat
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.AnyChatSendRetry
 import ai.hermes.bots.data.CanonicalChat
+import ai.hermes.bots.data.DiffText
 import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ChatMessagesParser
 import ai.hermes.bots.data.ChatStream
 import ai.hermes.bots.data.ChatUiState
 import ai.hermes.bots.data.ItemKind
 import ai.hermes.bots.data.PendingImage
+import ai.hermes.bots.data.TodoState
 import ai.hermes.bots.data.ToolResult
 import ai.hermes.bots.data.TurnWatchdog
 import ai.hermes.bots.protocol.Catalog
@@ -213,6 +215,10 @@ class ChatViewModel(
                 items = ChatMessagesParser.parse(result["messages"] as? JsonArray),
                 approval = card,
                 streaming = running,
+                // PROTOCOL.md §5.2: resume may return todo_state? — restore the plan card
+                // so a reconnect mid-turn doesn't lose the checklist (TodoState renders
+                // nothing when the shape doesn't parse).
+                todo = TodoState.parse(result["todo_state"]),
             )
         }
     }
@@ -391,6 +397,9 @@ class ChatViewModel(
                             // Q7 follow-up: result_text is verbose-only on the wire; flatten
                             // the always-present `result` so terminal chips can expand.
                             outputText = ToolResult.displayText(ev.payload["result"]),
+                            // Agent-ux P0: `inline_diff?` (PROTOCOL.md §6) — previously
+                            // dropped; tolerant extraction, null when absent/unshaped.
+                            inlineDiff = DiffText.extract(ev.payload["inline_diff"]),
                         )
                     }
                 } else {
@@ -399,6 +408,12 @@ class ChatViewModel(
                 st.copy(items = items)
             }
             Catalog.EVENT_STATUS_UPDATE -> _ui.update { it.copy(statusText = str("text")) }
+            Catalog.EVENT_TODO_UPDATED -> _ui.update {
+                // Agent-ux P0 (spec §5): the plan checklist. Tolerant parse — a payload we
+                // can't read renders nothing rather than guessing at a shape PROTOCOL.md
+                // doesn't pin ("normalized todo state").
+                it.copy(todo = TodoState.parse(ev.payload))
+            }
             Catalog.EVENT_APPROVAL_REQUEST,
             Catalog.EVENT_CLARIFY_REQUEST,
             Catalog.EVENT_SUDO_REQUEST,

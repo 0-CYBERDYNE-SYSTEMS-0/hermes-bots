@@ -5,7 +5,11 @@ import ai.hermes.bots.data.ApprovalCard
 import ai.hermes.bots.data.ApprovalPinPolicy
 import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ChatStream
+import ai.hermes.bots.data.DiffLineKind
+import ai.hermes.bots.data.DiffText
 import ai.hermes.bots.data.ItemKind
+import ai.hermes.bots.data.TodoItem
+import ai.hermes.bots.data.TodoStatus
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.ui.components.AssistantBubbleShape
 import ai.hermes.bots.ui.components.ChatComposer
@@ -35,6 +39,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +56,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -89,6 +95,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
@@ -438,6 +445,12 @@ fun ChatScreen(
                     }
                 }
             }
+            // Agent-ux P0 (spec §5): the live plan checklist. Sits above the working strip
+            // and survives until the next todo.updated replaces it (desktop plan-anchor
+            // behavior); user-collapsible so it never traps the transcript.
+            if (ui.todo.isNotEmpty()) {
+                TodoCard(ui.todo)
+            }
             // Gated on streaming too (incident 2026-09-16): the VM clears statusText on
             // complete/error/stall/interrupt, and this gate guarantees the "Working —"
             // strip can never outlive a live turn even if an event arrives out of order.
@@ -676,7 +689,9 @@ private fun ToolChip(item: ChatItem) {
     var open by remember(item.id) { mutableStateOf(false) }
     // Q7 (QA 2026-09-14): "Show all" unclamps the summary + output inside the chip.
     var showAll by remember(item.id) { mutableStateOf(false) }
-    val expandable = item.summary != null || item.text.isNotBlank() || item.outputText != null
+    // Agent-ux P0: a diff alone is reason enough to expand — it's the review surface.
+    val expandable = item.summary != null || item.text.isNotBlank() ||
+        item.outputText != null || item.inlineDiff != null
     // Q8: humane label on the chip face; the raw name stays in the expandable detail.
     val toolLabel = ai.hermes.bots.ui.util.Humanize.toolLabel(item.toolName)
     // Soft entrance for newly appearing chips (A8).
@@ -789,7 +804,9 @@ private fun ToolChip(item: ChatItem) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (item.summary != null || item.text.isNotBlank() || item.outputText != null) {
+                    // Agent-ux P0 (spec §4): tool.complete `inline_diff?` as red/green rows.
+                    item.inlineDiff?.let { DiffView(it, showAll) }
+                    if (expandable) {
                         Text(
                             if (showAll) "Show less" else "Show all",
                             style = MaterialTheme.typography.labelMedium,
@@ -802,6 +819,130 @@ private fun ToolChip(item: ChatItem) {
                 }
             }
         }
+        }
+    }
+}
+
+/**
+ * Agent-ux P0 (spec §4): unified-diff rows inside the expandable ToolChip — the review
+ * surface Cursor/Claude Code made the trust anchor. Rows share one horizontal scroll so a
+ * long line stays aligned across the whole hunk; collapsed shows a short preview, the
+ * chip's existing "Show all" reveals the capped full diff (DiffText.MAX_LINES).
+ */
+@Composable
+private fun DiffView(raw: String, expandedAll: Boolean) {
+    val previewLines = 8
+    val result = remember(raw) { DiffText.parse(raw) }
+    val colors = MaterialTheme.colorScheme
+    val diffScroll = rememberScrollState()
+    Column(Modifier.padding(top = 6.dp)) {
+        val rows = if (expandedAll) result.lines else result.lines.take(previewLines)
+        rows.forEach { line ->
+            val (color, bg) = when (line.kind) {
+                DiffLineKind.ADD -> colors.tertiary to colors.tertiaryContainer.copy(alpha = 0.32f)
+                DiffLineKind.DEL -> colors.error to colors.errorContainer.copy(alpha = 0.32f)
+                DiffLineKind.HUNK -> colors.primary to Color.Transparent
+                DiffLineKind.FILE, DiffLineKind.META -> colors.onSurfaceVariant to Color.Transparent
+                DiffLineKind.CONTEXT -> colors.onSurface to Color.Transparent
+            }
+            Text(
+                line.text,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelSmall,
+                color = color,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(bg)
+                    .horizontalScroll(diffScroll)
+                    .padding(horizontal = 4.dp),
+            )
+        }
+        if (result.truncated) {
+            Text(
+                "…diff truncated",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Agent-ux P0 (spec §5): the pinned plan checklist fed by todo.updated events. Header
+ * carries done/total like the desktop plan anchor; per-item glyphs: outlined check (done),
+ * pulsing dot (active), hollow circle (pending).
+ */
+@Composable
+private fun TodoCard(items: List<TodoItem>) {
+    var collapsed by remember { mutableStateOf(false) }
+    val done = items.count { it.status == TodoStatus.DONE }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { collapsed = !collapsed },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Plan",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "  $done/${items.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (collapsed) "▸" else "▾",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (!collapsed) {
+                items.forEach { todo ->
+                    Row(
+                        Modifier.padding(top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        when (todo.status) {
+                            TodoStatus.DONE -> Icon(
+                                Icons.Outlined.CheckCircle,
+                                contentDescription = "Done",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                            TodoStatus.ACTIVE -> ai.hermes.bots.ui.components.PulsingDot(dotSize = 8.dp)
+                            TodoStatus.PENDING -> Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
+                            )
+                        }
+                        Text(
+                            todo.content,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (todo.status == TodoStatus.DONE) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
     }
 }

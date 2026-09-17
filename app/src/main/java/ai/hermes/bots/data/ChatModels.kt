@@ -22,6 +22,9 @@ data class ChatItem(
     // Q7 follow-up (live QA 2026-09-14): flattened tool output for non-verbose sessions
     // (the wire omits result_text there) — see ToolResult.displayText.
     val outputText: String? = null,
+    // Agent-ux P0 (spec §4): tool.complete `inline_diff?` (PROTOCOL.md §6), previously
+    // dropped — rendered as red/green rows inside the expandable chip. See DiffText.
+    val inlineDiff: String? = null,
     // Red-team SF-3: only interim-sealed rows may be grown by a superseding final
     // (desktop gates on existing.interim — use-message-stream/index.ts:674).
     val interimSealed: Boolean = false,
@@ -382,6 +385,9 @@ data class ChatUiState(
     val approvalExpired: Boolean = false,
     val botModel: String? = null,
     val pendingImage: PendingImage? = null,
+    // Agent-ux P0 (spec §5): the live plan checklist. Replaced by each todo.updated event,
+    // seeded from session.resume's todo_state?; persists across turns until replaced.
+    val todo: List<TodoItem> = emptyList(),
 )
 
 /**

@@ -2,7 +2,9 @@ package ai.hermes.bots.ui.chat
 
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.ApprovalCard
+import ai.hermes.bots.data.ApprovalPinPolicy
 import ai.hermes.bots.data.ChatItem
+import ai.hermes.bots.data.ChatStream
 import ai.hermes.bots.data.ItemKind
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.ui.components.AssistantBubbleShape
@@ -24,6 +26,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,6 +53,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -321,7 +326,13 @@ fun ChatScreen(
                 val last = ui.items.lastOrNull()
                 val alreadyInline = last?.kind == ItemKind.ERROR && last.text == err
                 if (!alreadyInline) {
-                    ai.hermes.bots.ui.components.ErrorLine(raw = err, botName = botName)
+                    // Incident 2026-09-16: the banner cleared only on a successful send —
+                    // now dismissible like every other line.
+                    ai.hermes.bots.ui.components.ErrorLine(
+                        raw = err,
+                        botName = botName,
+                        onDismiss = { vm.dismissError() },
+                    )
                 }
             }
             if (ui.loading) {
@@ -372,12 +383,22 @@ fun ChatScreen(
                                             is BubbleRow.User -> BubbleUserView(bubble.item)
                                             is BubbleRow.Bot -> BubbleBotView(bubble.item, botName)
                                             is BubbleRow.Work -> BubbleWorkGroup(bubble.items)
-                                            is BubbleRow.Always -> BubbleAlwaysView(bubble.item, botName)
+                                            is BubbleRow.Always -> BubbleAlwaysView(
+                                                bubble.item,
+                                                botName,
+                                                onDismissItem = vm::dismissItem,
+                                                onInterruptStall = vm::interrupt,
+                                            )
                                         }
                                     }
                                 } else {
                                     when (val row = rows[idx]) {
-                                        is TranscriptRow.Message -> ChatItemView(row.item, botName)
+                                        is TranscriptRow.Message -> ChatItemView(
+                                            row.item,
+                                            botName,
+                                            onDismissItem = vm::dismissItem,
+                                            onInterruptStall = vm::interrupt,
+                                        )
                                         is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
                                     }
                                 }
@@ -417,9 +438,13 @@ fun ChatScreen(
                     }
                 }
             }
+            // Gated on streaming too (incident 2026-09-16): the VM clears statusText on
+            // complete/error/stall/interrupt, and this gate guarantees the "Working —"
+            // strip can never outlive a live turn even if an event arrives out of order.
             AnimatedVisibility(
-                visible = ui.statusText != null,
+                visible = ui.streaming && ui.statusText != null,
                 enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
+                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
             ) {
                 ui.statusText?.let {
                     WorkingStatus(
@@ -429,17 +454,48 @@ fun ChatScreen(
                     )
                 }
             }
+            // Incident 2026-09-16: resolved/expired cards used to stay pinned forever.
+            // ApprovalPinPolicy owns the lifetime: an active card always shows; a resolved
+            // card stays until the user clears it (X on the card); an expired card lingers
+            // EXPIRED_LINGER_MS so the state is seen, then auto-dismisses. A fresh
+            // approval resets dismissal, which is what lets it replace the pinned card.
             var lastApproval by remember { mutableStateOf<ApprovalCard?>(null) }
-            LaunchedEffect(ui.approval) { if (ui.approval != null) lastApproval = ui.approval }
+            var approvalDismissed by remember { mutableStateOf(false) }
+            LaunchedEffect(ui.approval) {
+                if (ui.approval != null) {
+                    lastApproval = ui.approval
+                    approvalDismissed = false
+                }
+            }
+            LaunchedEffect(ui.approvalExpired) {
+                if (ui.approvalExpired) {
+                    delay(ApprovalPinPolicy.EXPIRED_LINGER_MS)
+                    approvalDismissed = true
+                }
+            }
             val pinnedCard = ui.approval ?: lastApproval
-            val showApproval = pinnedCard != null &&
-                (ui.approval != null || ui.approvalResolved != null || ui.approvalExpired)
+            val showApproval = ApprovalPinPolicy.visible(
+                hasCard = pinnedCard != null,
+                active = ui.approval != null,
+                resolved = ui.approvalResolved,
+                expired = ui.approvalExpired,
+                dismissed = approvalDismissed,
+            )
             AnimatedVisibility(
                 visible = showApproval,
                 enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
+                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
             ) {
                 if (pinnedCard != null) {
-                    ApprovalCardView(pinnedCard, ui.approvalResolved, ui.approvalExpired, onRespond = vm::respond)
+                    ApprovalCardView(
+                        pinnedCard,
+                        ui.approvalResolved,
+                        ui.approvalExpired,
+                        onRespond = vm::respond,
+                        // X only once the card is no longer the live question — an active
+                        // approval is the turn's blocking state, not a stuck element.
+                        onDismiss = if (ui.approval == null) ({ approvalDismissed = true }) else null,
+                    )
                 }
             }
             if (canSend) {
@@ -456,8 +512,13 @@ fun ChatScreen(
                     onSend = {
                         tick()
                         userScrolledUp = false // the sender wants eyes on the new round
-                        vm.send(draft)
-                        draft = ""
+                        // Belt-and-braces: during a running turn the trailing button is
+                        // stop/steer only, and prompt.submit on a busy session would just
+                        // draw RPC 4091 — never send here.
+                        if (!ui.streaming) {
+                            vm.send(draft)
+                            draft = ""
+                        }
                     },
                     onSteer = {
                         tick()
@@ -498,7 +559,12 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ChatItemView(item: ChatItem, botName: String) {
+private fun ChatItemView(
+    item: ChatItem,
+    botName: String,
+    onDismissItem: ((String) -> Unit)? = null,
+    onInterruptStall: (() -> Unit)? = null,
+) {
     val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp
     when (item.kind) {
         ItemKind.USER -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -534,8 +600,24 @@ private fun ChatItemView(item: ChatItem, botName: String) {
             }
         }
         ItemKind.TOOL -> ToolChip(item)
-        // The one inline system-line style, shared with the banner (A28).
-        ItemKind.ERROR -> ai.hermes.bots.ui.components.ErrorLine(raw = item.text, botName = botName)
+        // The one inline system-line style, shared with the banner (A28). Id prefixes carry
+        // the client-side affordances (ChatStream KDoc): "stall-"/"quiet-" watchdog lines
+        // gain an Interrupt action, "warn-" lines render server warning text verbatim —
+        // every line is dismissible (incident 2026-09-16: nothing may be undownloadable
+        // from the screen).
+        ItemKind.ERROR -> {
+            val stall = item.id.startsWith(ChatStream.STALL_ID_PREFIX)
+            val quiet = item.id.startsWith(ChatStream.QUIET_ID_PREFIX)
+            val warn = item.id.startsWith(ChatStream.WARNING_ID_PREFIX)
+            ai.hermes.bots.ui.components.ErrorLine(
+                raw = item.text,
+                botName = botName,
+                verbatim = stall || quiet || warn,
+                onDismiss = onDismissItem?.let { onDismiss -> { onDismiss(item.id) } },
+                actionLabel = if (stall || quiet) "Interrupt" else null,
+                onAction = if (stall || quiet) onInterruptStall else null,
+            )
+        }
     }
 }
 
@@ -725,7 +807,13 @@ private fun ToolChip(item: ChatItem) {
 }
 
 @Composable
-private fun ApprovalCardView(card: ApprovalCard, resolved: String?, expired: Boolean, onRespond: (String) -> Unit) {
+private fun ApprovalCardView(
+    card: ApprovalCard,
+    resolved: String?,
+    expired: Boolean,
+    onRespond: (String) -> Unit,
+    onDismiss: (() -> Unit)? = null,
+) {
     val kindLabel = when (card.kind) {
         Catalog.EVENT_CLARIFY_REQUEST -> "Question"
         Catalog.EVENT_SUDO_REQUEST -> "Elevated access requested"
@@ -737,8 +825,25 @@ private fun ApprovalCardView(card: ApprovalCard, resolved: String?, expired: Boo
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            // Kind demoted to an overline; the ask itself is the title (A13).
-            Text(kindLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Kind demoted to an overline; the ask itself is the title (A13).
+                Text(
+                    kindLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onDismiss != null) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Dismiss",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
             Text(
                 card.command ?: kindLabel,
                 style = MaterialTheme.typography.titleSmall,
@@ -1041,9 +1146,24 @@ private fun BubbleWorkGroup(items: List<ChatItem>) {
 
 /** Relay lines and errors: distinct, always visible — errors keep the shared ErrorLine. */
 @Composable
-private fun BubbleAlwaysView(item: ChatItem, botName: String) {
+private fun BubbleAlwaysView(
+    item: ChatItem,
+    botName: String,
+    onDismissItem: ((String) -> Unit)? = null,
+    onInterruptStall: (() -> Unit)? = null,
+) {
     if (item.kind == ItemKind.ERROR) {
-        ai.hermes.bots.ui.components.ErrorLine(raw = item.text, botName = botName)
+        val stall = item.id.startsWith(ChatStream.STALL_ID_PREFIX)
+        val quiet = item.id.startsWith(ChatStream.QUIET_ID_PREFIX)
+        val warn = item.id.startsWith(ChatStream.WARNING_ID_PREFIX)
+        ai.hermes.bots.ui.components.ErrorLine(
+            raw = item.text,
+            botName = botName,
+            verbatim = stall || quiet || warn,
+            onDismiss = onDismissItem?.let { onDismiss -> { onDismiss(item.id) } },
+            actionLabel = if (stall || quiet) "Interrupt" else null,
+            onAction = if (stall || quiet) onInterruptStall else null,
+        )
         return
     }
     val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp

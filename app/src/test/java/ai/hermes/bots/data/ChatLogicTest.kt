@@ -1,6 +1,7 @@
 package ai.hermes.bots.data
 
 import ai.hermes.bots.protocol.Catalog
+import ai.hermes.bots.ui.util.Humanize
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -99,4 +100,29 @@ class ChatLogicTest {
     fun `null messages parse to empty`() {
         assertTrue(ChatMessagesParser.parse(null).isEmpty())
     }
+}
+
+/** Zombie-session heal policy (live dogfood 2026-09-16): 4001 after a socket drop must
+ * trigger the VM's re-open path, while ordinary submit failures keep their own handling. */
+class StaleSessionHealPolicyTest {
+
+  @Test
+  fun `rpc 4001 session-not-found is stale`() {
+    assertTrue(AnyChatSendRetry.isStaleSessionError(4001, "rpc 4001: session not found"))
+    assertTrue(AnyChatSendRetry.isStaleSessionError(null, "Session not found"))
+    assertTrue(AnyChatSendRetry.isStaleSessionError(null, "no such session"))
+  }
+
+  @Test
+  fun `ordinary submit failures are not stale`() {
+    assertFalse(AnyChatSendRetry.isStaleSessionError(4091, "session is busy"))
+    assertFalse(AnyChatSendRetry.isStaleSessionError(-32602, "invalid params"))
+    assertFalse(AnyChatSendRetry.isStaleSessionError(null, "gateway took too long"))
+  }
+
+  @Test
+  fun `reconnect notice is humane and passes through friendlyError untouched`() {
+    val raw = ChatStream.RECONNECT_NOTICE
+    assertEquals(raw, Humanize.friendlyError(raw, "profile-architect"))
+  }
 }

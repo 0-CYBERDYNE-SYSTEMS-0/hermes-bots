@@ -164,6 +164,13 @@ object Humanize {
     "couldn't load the conversation.",
     "couldn't start a fresh chat — try again.",
     "couldn't send that response.",
+    // Incident 2026-09-16 client-authored lines (ChatViewModel) — already humane, and the
+    // stall notice must show verbatim next to its Interrupt action, never as a generic error.
+    "turn seems stuck",
+    "steer didn't reach ",
+    // Zombie-session self-heal (live dogfood 2026-09-16, rpc 4001): the VM re-opened the
+    // session; the line asks for an honest resend, not a generic "something went wrong".
+    "chat reconnected",
   )
 
   /**

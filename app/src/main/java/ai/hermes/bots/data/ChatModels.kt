@@ -22,10 +22,90 @@ data class ChatItem(
     // Q7 follow-up (live QA 2026-09-14): flattened tool output for non-verbose sessions
     // (the wire omits result_text there) — see ToolResult.displayText.
     val outputText: String? = null,
+    // Agent-ux P0 (spec §4): tool.complete `inline_diff?` (PROTOCOL.md §6), previously
+    // dropped — rendered as red/green rows inside the expandable chip. See DiffText.
+    val inlineDiff: String? = null,
     // Red-team SF-3: only interim-sealed rows may be grown by a superseding final
     // (desktop gates on existing.interim — use-message-stream/index.ts:674).
     val interimSealed: Boolean = false,
 )
+
+/**
+ * Incident 2026-09-16 (dogfood stall): a turn whose complete event never arrives left the
+ * composer in steer/stop mode and the "Working —" strip pinned forever. The watchdog watches
+ * EVENT ACTIVITY, never time-since-start: server turns legitimately pause for long tool runs
+ * (PROTOCOL.md §5.1 turn loop has no per-turn deadline; the 1320 s budget in §5.7 is
+ * bot_relay-only). The thresholds sit well above the §3 heartbeat (15 s ping / 45 s
+ * reconnect) so transport jitter can never trip them.
+ *
+ * Two phases, calibrated by live dogfood 2026-09-16: a plain `sleep 120` tool run emits NO
+ * gateway events for its whole duration, so a 60 s mark must NOT touch the composer. SOFT
+ * only appends a dismissible "no activity" line (with an Interrupt shortcut); HARD — reached
+ * at the server's own 600 s turn budget, where a silent turn is dead in practice — also
+ * frees the composer (streaming=false, strip cleared).
+ */
+object TurnWatchdog {
+
+    /** Silence after which a dismissible "no activity" line appears (composer untouched). */
+    const val SOFT_NOTICE_MS = 60_000L
+
+    /** Silence after which the turn is declared stalled and the composer is released. */
+    const val HARD_STALL_MS = 600_000L
+
+    /** How often the VM ticker re-evaluates [phase] while a turn is live. */
+    const val CHECK_INTERVAL_MS = 10_000L
+
+    /** Watchdog verdict for a streaming turn's current silence window. */
+    enum class Phase { NONE, SOFT, HARD }
+
+    /**
+     * The full decision: only a live, not-yet-stalled turn can escalate, and the phases are
+     * cumulative-silence thresholds (SOFT ⊂ HARD), each one-shot per silence window.
+     */
+    fun phase(
+        streaming: Boolean,
+        alreadyStalled: Boolean,
+        lastActivityMs: Long,
+        nowMs: Long,
+    ): Phase = when {
+        !streaming || alreadyStalled -> Phase.NONE
+        nowMs - lastActivityMs >= HARD_STALL_MS -> Phase.HARD
+        nowMs - lastActivityMs >= SOFT_NOTICE_MS -> Phase.SOFT
+        else -> Phase.NONE
+    }
+}
+
+/**
+ * Incident 2026-09-16: resolved/expired approval cards stayed pinned above the composer
+ * forever (until the next approval). Policy for the pinned card's lifetime:
+ * - an ACTIVE card is always visible (it is the turn's blocking question);
+ * - a resolved/expired card stays only until the user dismisses it;
+ * - an expired card additionally auto-dismisses after [EXPIRED_LINGER_MS] so the
+ *   "Expired — no action taken" state is seen, then cleans itself up.
+ */
+object ApprovalPinPolicy {
+
+    /** How long an expired card lingers (state still visible) before auto-dismiss. */
+    const val EXPIRED_LINGER_MS = 6_000L
+
+    /** True once the expired card has overstayed its linger window. */
+    fun expiredLingerDone(expiredAtMs: Long, nowMs: Long): Boolean =
+        nowMs - expiredAtMs >= EXPIRED_LINGER_MS
+
+    /**
+     * Whether a pinned card renders at all. `active` = the card is the live pending
+     * approval; `dismissed` = the user (or the expire timer) cleared it. A fresh
+     * approval resets `dismissed` at the call site, which is what lets a new card
+     * replace a pinned one.
+     */
+    fun visible(
+        hasCard: Boolean,
+        active: Boolean,
+        resolved: String?,
+        expired: Boolean,
+        dismissed: Boolean,
+    ): Boolean = hasCard && !dismissed && (active || resolved != null || expired)
+}
 
 /**
  * Q2 (QA 2026-09-14): pure streaming-segment state, mirroring the desktop — interim
@@ -105,6 +185,70 @@ object ChatStream {
 
   private fun sealed(text: String, nextId: () -> String, interimSealed: Boolean = false): ChatItem =
       ChatItem(nextId(), ItemKind.ASSISTANT, text, streaming = false, interimSealed = interimSealed)
+
+  // ---------- Client-side transcript artifacts (incident 2026-09-16) ----------
+  //
+  // These lines never exist in server history, so removing them client-side is final:
+  // catchUp() cannot re-add a dismissed one because lastSeq advanced past the event when
+  // it was first delivered, and epoch-change reload() rebuilds from server messages only.
+
+  /** Id prefix of the turn-stall system line appended by the TurnWatchdog HARD declaration. */
+  const val STALL_ID_PREFIX = "stall-"
+
+  /** Id prefix of the SOFT "no activity" line — same lifecycle, gentler wording. */
+  const val QUIET_ID_PREFIX = "quiet-"
+
+  /** Id prefix of the dismissible message.complete `warning?` line (PROTOCOL.md §5.1). */
+  const val WARNING_ID_PREFIX = "warn-"
+
+  /** Marks a client-side steer echo, matching the ↔ relay / ↻ resumed glyph convention. */
+  const val STEER_GLYPH = "↗ "
+
+  /** App-authored humane text of the stall line; passes through Humanize.appBanners untouched. */
+  const val STALL_NOTICE = "Turn seems stuck — you can interrupt or send a new message."
+
+  /**
+   * SOFT-watchdog line (live dogfood 2026-09-16: a legit `sleep 120` trips any shorter
+   * silence mark) — observed silence, never a stuck claim; the composer stays in steer mode.
+   */
+  const val QUIET_NOTICE = "No activity for over a minute — you can interrupt if it's stuck."
+
+  /**
+   * Live dogfood 2026-09-16 (Wi-Fi blip): the gateway reaped the ws-attached session even
+   * with close_on_disconnect=false, so every send answered rpc 4001 "session not found"
+   * until the screen was torn down. After the VM self-heals (full re-open), this line asks
+   * the user to resend the one message that bounced.
+   */
+  const val RECONNECT_NOTICE = "Chat reconnected — send that again."
+
+  /** Append the one-shot stall notice (ERROR kind: the shared system-line style, A28). */
+  fun stallNotice(items: List<ChatItem>, nextId: () -> String): List<ChatItem> =
+      items + ChatItem(nextId(), ItemKind.ERROR, STALL_NOTICE)
+
+  /** Append the SOFT no-activity notice; no-op while any watchdog notice is already up. */
+  fun quietNotice(items: List<ChatItem>, nextId: () -> String): List<ChatItem> {
+    if (items.any { it.id.startsWith(STALL_ID_PREFIX) || it.id.startsWith(QUIET_ID_PREFIX) }) {
+      return items
+    }
+    return items + ChatItem(nextId(), ItemKind.ERROR, QUIET_NOTICE)
+  }
+
+  /** Drop watchdog notices — late activity (or an interrupt) proves them stale. */
+  fun clearStallNotices(items: List<ChatItem>): List<ChatItem> =
+      items.filterNot {
+        it.id.startsWith(STALL_ID_PREFIX) || it.id.startsWith(QUIET_ID_PREFIX)
+      }
+
+  /**
+   * Optimistic steer echo: a user-side bubble with the ↗ marker so the user sees exactly
+   * what was injected mid-turn (session.steer itself streams no user-visible ack). The line
+   * is never doubled: no user-message event type is consumed live, and a reload rebuilds
+   * the transcript from server history alone (the ↗ marker is client-side only).
+   */
+  fun steerEcho(items: List<ChatItem>, text: String, nextId: () -> String): List<ChatItem> {
+    if (text.isBlank()) return items
+    return items + ChatItem(nextId(), ItemKind.USER, STEER_GLYPH + text)
+  }
 }
 
 /**
@@ -243,6 +387,9 @@ data class ChatUiState(
     val approvalExpired: Boolean = false,
     val botModel: String? = null,
     val pendingImage: PendingImage? = null,
+    // Agent-ux P0 (spec §5): the live plan checklist. Replaced by each todo.updated event,
+    // seeded from session.resume's todo_state?; persists across turns until replaced.
+    val todo: List<TodoItem> = emptyList(),
 )
 
 /**

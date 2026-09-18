@@ -1,14 +1,18 @@
 package ai.hermes.bots.ui.chat
 
 import ai.hermes.bots.HermesBotsApp
+import ai.hermes.bots.data.AnyChatSendRetry
 import ai.hermes.bots.data.CanonicalChat
+import ai.hermes.bots.data.DiffText
 import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ChatMessagesParser
 import ai.hermes.bots.data.ChatStream
 import ai.hermes.bots.data.ChatUiState
 import ai.hermes.bots.data.ItemKind
 import ai.hermes.bots.data.PendingImage
+import ai.hermes.bots.data.TodoState
 import ai.hermes.bots.data.ToolResult
+import ai.hermes.bots.data.TurnWatchdog
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.protocol.GatewayEvent
 import ai.hermes.bots.protocol.HermesGateway
@@ -25,6 +29,7 @@ import androidx.lifecycle.viewModelScope
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -107,6 +112,14 @@ class ChatViewModel(
     private var itemCounter = 0
     private var eventJob: Job? = null
     private var reconnectJob: Job? = null
+    private var watchdogJob: Job? = null
+
+    // TurnWatchdog (incident 2026-09-16): last session-event receive stamp + one-shot latches.
+    // Refreshed on EVERY gateway event for this session — server turns legitimately pause
+    // for long tool runs, so staleness is event-activity silence, never time-since-start.
+    private var lastActivityMs = 0L
+    private var stalledTurn = false
+    private var quietNoticed = false
 
     /** Clarify request_ids already skip-answered from send() — fire at most once each. */
     private val clarifySkipped = mutableSetOf<String>()
@@ -192,6 +205,9 @@ class ChatViewModel(
             result["pending_clarify"] as? JsonObject,
         )
         val running = boolField(result, "running") == true || boolField(result, "inflight") == true
+        lastActivityMs = System.currentTimeMillis()
+        stalledTurn = false
+        quietNoticed = false
         _ui.update {
             it.copy(
                 loading = false,
@@ -199,6 +215,10 @@ class ChatViewModel(
                 items = ChatMessagesParser.parse(result["messages"] as? JsonArray),
                 approval = card,
                 streaming = running,
+                // PROTOCOL.md §5.2: resume may return todo_state? — restore the plan card
+                // so a reconnect mid-turn doesn't lose the checklist (TodoState renders
+                // nothing when the shape doesn't parse).
+                todo = TodoState.parse(result["todo_state"]),
             )
         }
     }
@@ -209,6 +229,22 @@ class ChatViewModel(
         eventJob?.cancel()
         eventJob = viewModelScope.launch {
             gw.events.collect { ev -> if (ev.sessionId == sid) onEvent(ev) }
+        }
+        watchdogJob?.cancel()
+        watchdogJob = viewModelScope.launch {
+            while (true) {
+                delay(TurnWatchdog.CHECK_INTERVAL_MS)
+                val st = _ui.value
+                when (TurnWatchdog.phase(st.streaming, stalledTurn, lastActivityMs, System.currentTimeMillis())) {
+                    TurnWatchdog.Phase.HARD -> declareStall()
+                    TurnWatchdog.Phase.SOFT -> if (!quietNoticed) {
+                        quietNoticed = true
+                        // SOFT is advisory only: the composer and strip stay exactly as they are.
+                        _ui.update { running -> running.copy(items = ChatStream.quietNotice(running.items) { "quiet-${++itemCounter}" }) }
+                    }
+                    TurnWatchdog.Phase.NONE -> {}
+                }
+            }
         }
         reconnectJob?.cancel()
         reconnectJob = viewModelScope.launch {
@@ -246,6 +282,10 @@ class ChatViewModel(
                 return
             }
             result.events.forEach { onEvent(it) }
+        } catch (e: RpcException) {
+            // Zombie session (live dogfood 2026-09-16): the gateway reaped the ws-attached
+            // session while the socket was down — heal instead of leaving every send 4001-ing.
+            if (AnyChatSendRetry.isStaleSessionError(e.code, e.message)) healAfterStaleSession()
         } catch (_: Exception) {
             // best-effort; next sessions.changed/5s roster still functions
         }
@@ -260,6 +300,13 @@ class ChatViewModel(
                 buildJsonObject { put("session_id", sid); put("profile", botName) },
                 120_000,
             ))
+        } catch (e: RpcException) {
+            if (AnyChatSendRetry.isStaleSessionError(e.code, e.message)) {
+                healAfterStaleSession()
+            } else {
+                // Q9: humane banner, nothing technical appended (the raw cause stays in logs).
+                _ui.update { it.copy(error = "Couldn't load the conversation.") }
+            }
         } catch (_: Exception) {
             // Q9: humane banner, nothing technical appended (the raw cause stays in logs).
             _ui.update { it.copy(error = "Couldn't load the conversation.") }
@@ -268,6 +315,17 @@ class ChatViewModel(
 
     fun onEvent(ev: GatewayEvent) {
         ev.seq?.let { if (it > lastSeq) lastSeq = it }
+        // TurnWatchdog: any session-scoped event is proof of life. A late event after a
+        // stall drops the stall latch and clears the stale notice; a late message.complete
+        // settles the transcript WITHOUT resurrecting streaming (its branch copies
+        // streaming = false unconditionally), and only a fresh message.start may re-arm
+        // the steer/stop composer.
+        lastActivityMs = System.currentTimeMillis()
+        if (stalledTurn || quietNoticed) {
+            stalledTurn = false
+            quietNoticed = false
+            _ui.update { st -> st.copy(items = ChatStream.clearStallNotices(st.items)) }
+        }
         fun str(key: String): String? =
             (ev.payload[key] as? JsonPrimitive)?.takeIf { p -> p.isString }?.content
         when (ev.type) {
@@ -275,6 +333,8 @@ class ChatViewModel(
                 st.copy(
                     items = finalizeStreaming(st.items) + ChatItem("a-${++itemCounter}", ItemKind.ASSISTANT, "", streaming = true),
                     streaming = true,
+                    // The banner described the previous attempt; a new turn supersedes it.
+                    error = null,
                 )
             }
             Catalog.EVENT_MESSAGE_DELTA -> _ui.update { st ->
@@ -296,6 +356,12 @@ class ChatViewModel(
                 val status = str("status")
                 if (errText != null || status == "error") {
                     items = items + ChatItem("e-${++itemCounter}", ItemKind.ERROR, errText ?: "turn error")
+                }
+                // PROTOCOL.md §5.1/§6: message.complete may carry `warning?` — previously
+                // dropped on the floor. Rendered as a dismissible verbatim system line.
+                val warning = str("warning")
+                if (!warning.isNullOrBlank()) {
+                    items = items + ChatItem("warn-${++itemCounter}", ItemKind.ERROR, warning)
                 }
                 st.copy(items = items, streaming = false, statusText = null)
             }
@@ -331,6 +397,9 @@ class ChatViewModel(
                             // Q7 follow-up: result_text is verbose-only on the wire; flatten
                             // the always-present `result` so terminal chips can expand.
                             outputText = ToolResult.displayText(ev.payload["result"]),
+                            // Agent-ux P0: `inline_diff?` (PROTOCOL.md §6) — previously
+                            // dropped; tolerant extraction, null when absent/unshaped.
+                            inlineDiff = DiffText.extract(ev.payload["inline_diff"]),
                         )
                     }
                 } else {
@@ -339,6 +408,12 @@ class ChatViewModel(
                 st.copy(items = items)
             }
             Catalog.EVENT_STATUS_UPDATE -> _ui.update { it.copy(statusText = str("text")) }
+            Catalog.EVENT_TODO_UPDATED -> _ui.update {
+                // Agent-ux P0 (spec §5): the plan checklist. Tolerant parse — a payload we
+                // can't read renders nothing rather than guessing at a shape PROTOCOL.md
+                // doesn't pin ("normalized todo state").
+                it.copy(todo = TodoState.parse(ev.payload))
+            }
             Catalog.EVENT_APPROVAL_REQUEST,
             Catalog.EVENT_CLARIFY_REQUEST,
             Catalog.EVENT_SUDO_REQUEST,
@@ -355,6 +430,8 @@ class ChatViewModel(
                 st.copy(
                     items = st.items + ChatItem("e-${++itemCounter}", ItemKind.ERROR, str("message") ?: "error"),
                     streaming = false,
+                    // Incident 2026-09-16: the "Working —" strip must never outlive the turn.
+                    statusText = null,
                 )
             }
             else -> {
@@ -413,17 +490,39 @@ class ChatViewModel(
                 // Image-only sends ride the server's own attachment turn-text convention.
                 val submitText = text.ifBlank { "[User attached image: ${pending?.filename}]" }
                 gateway?.request(Catalog.METHOD_PROMPT_SUBMIT, CanonicalChat.submitParams(sid, submitText), 30_000)
+                lastActivityMs = System.currentTimeMillis()
+                stalledTurn = false
+                quietNoticed = false
                 _ui.update { it.copy(streaming = true, error = null, pendingImage = null) }
             } catch (e: RpcException) {
-                _ui.update { st ->
-                    st.copy(
-                        streaming = false,
-                        items = st.items + ChatItem("e-${++itemCounter}", ItemKind.ERROR, "submit failed (${e.code}): ${e.message}"),
-                    )
+                if (AnyChatSendRetry.isStaleSessionError(e.code, e.message)) {
+                    healAfterStaleSession()
+                } else {
+                    _ui.update { st ->
+                        st.copy(
+                            streaming = false,
+                            items = st.items + ChatItem("e-${++itemCounter}", ItemKind.ERROR, "submit failed (${e.code}): ${e.message}"),
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _ui.update { it.copy(streaming = false, error = "submit failed: ${e.message}") }
             }
+        }
+    }
+
+    /**
+     * Live dogfood 2026-09-16 (Wi-Fi blip): the gateway reaped the ws-attached session
+     * even with close_on_disconnect=false, so runtimeSessionId went stale and EVERY
+     * send/steer/approval answered rpc 4001 "session not found" until the screen was torn
+     * down and reopened — a zombie chat. Self-heal: re-run the full open (canonical resume,
+     * else a fresh canonical session), then say honestly that the bounced message must be
+     * resent. Runs in the caller's coroutine; open() restarts the event collectors itself.
+     */
+    private suspend fun healAfterStaleSession() {
+        open()
+        _ui.update { st ->
+            st.copy(items = st.items + ChatItem("e-${++itemCounter}", ItemKind.ERROR, ChatStream.RECONNECT_NOTICE))
         }
     }
 
@@ -480,6 +579,12 @@ class ChatViewModel(
                     )
                 }
                 _ui.update { it.copy(approval = null, approvalResolved = choice) }
+            } catch (e: RpcException) {
+                if (AnyChatSendRetry.isStaleSessionError(e.code, e.message)) {
+                    healAfterStaleSession()
+                } else {
+                    _ui.update { it.copy(error = "Couldn't send that response.") }
+                }
             } catch (_: Exception) {
                 _ui.update { it.copy(error = "Couldn't send that response.") }
             }
@@ -492,19 +597,73 @@ class ChatViewModel(
             runCatching {
                 gateway?.request(Catalog.METHOD_SESSION_INTERRUPT, buildJsonObject { put("session_id", sid) })
             }
-            _ui.update { it.copy(streaming = false, statusText = null) }
+            stalledTurn = false
+            quietNoticed = false
+            _ui.update { st ->
+                st.copy(streaming = false, statusText = null, items = ChatStream.clearStallNotices(st.items))
+            }
         }
     }
 
-    fun steer(text: String) {
+    /**
+     * §5.1 session.steer {session_id, text}: inject typed text mid-turn (incident
+     * 2026-09-16 — the only previous affordance was the IME action, and failures were
+     * silently swallowed). The echo lands optimistically as a user-side ↗ item so the
+     * user sees what was injected; the gateway streams the effect itself — no fake acks.
+     * A failed steer surfaces an ErrorLine (app-authored text passes through
+     * Humanize.appBanners untouched) instead of vanishing.
+     */
+    fun steer(rawText: String) {
         val sid = runtimeSessionId ?: return
+        val text = rawText.trim()
+        if (text.isEmpty()) return
+        _ui.update { st -> st.copy(items = ChatStream.steerEcho(st.items, text) { "u-${++itemCounter}" }) }
         viewModelScope.launch {
-            runCatching {
+            try {
                 gateway?.request(
                     Catalog.METHOD_SESSION_STEER,
                     buildJsonObject { put("session_id", sid); put("text", text) },
                 )
+            } catch (e: RpcException) {
+                if (AnyChatSendRetry.isStaleSessionError(e.code, e.message)) {
+                    healAfterStaleSession()
+                } else {
+                    steerFailed()
+                }
+            } catch (_: Exception) {
+                steerFailed()
             }
+        }
+    }
+
+    private fun steerFailed() {
+        _ui.update { st ->
+            st.copy(
+                items = st.items +
+                    ChatItem("e-${++itemCounter}", ItemKind.ERROR, "Steer didn't reach $botName — try again."),
+            )
+        }
+    }
+
+    /** Remove a client-side artifact (inline error, stall notice, warning) from the transcript. */
+    fun dismissItem(id: String) {
+        _ui.update { st -> st.copy(items = st.items.filterNot { it.id == id }) }
+    }
+
+    /** Clear the humane banner — it described the previous attempt, not a permanent state. */
+    fun dismissError() {
+        _ui.update { it.copy(error = null) }
+    }
+
+    /** TurnWatchdog declaration: free the composer and surface the dismissible notice. */
+    private fun declareStall() {
+        stalledTurn = true
+        _ui.update { st ->
+            st.copy(
+                streaming = false,
+                statusText = null,
+                items = ChatStream.stallNotice(st.items) { "stall-${++itemCounter}" },
+            )
         }
     }
 
@@ -573,6 +732,7 @@ class ChatViewModel(
     override fun onCleared() {
         eventJob?.cancel()
         reconnectJob?.cancel()
+        watchdogJob?.cancel()
         super.onCleared()
     }
 }

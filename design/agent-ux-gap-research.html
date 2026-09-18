@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes Bots — AI Agent UX Gap Research · Sept 2026</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --canvas: #0D1116;
+    --surface: #141B24;
+    --surface-2: #1A232E;
+    --line: #243040;
+    --line-soft: #1C2733;
+    --text: #E6EDF3;
+    --text-dim: #9AA7B4;
+    --text-faint: #66727F;
+    --accent: #35C2A0;
+    --accent-dim: rgba(53,194,160,.12);
+    --amber: #E8B33E;
+    --amber-dim: rgba(232,179,62,.12);
+    --red: #F0616D;
+    --red-dim: rgba(240,97,109,.12);
+    --violet: #A78BFA;
+    --violet-dim: rgba(167,139,250,.14);
+    --blue: #6CB6FF;
+    --blue-dim: rgba(108,182,255,.12);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+  body {
+    background: var(--canvas);
+    color: var(--text);
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 15.5px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre, .mono { font-family: 'IBM Plex Mono', 'SF Mono', Menlo, monospace; }
+
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(13,17,22,.92); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+    padding: 14px 0;
+  }
+  .header-inner { max-width: 1080px; margin: 0 auto; padding: 0 28px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .header-inner h1 { font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
+  .header-inner .sub { color: var(--text-faint); font-size: 13px; }
+  nav { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+  nav a { color: var(--text-dim); text-decoration: none; font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 8px; }
+  nav a:hover { color: var(--text); background: var(--surface-2); }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 28px 100px; }
+  section { margin-bottom: 64px; }
+  h2 {
+    font-size: 24px; font-weight: 800; letter-spacing: -.02em; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  h2 .num {
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600;
+    color: var(--accent); background: var(--accent-dim); border: 1px solid rgba(53,194,160,.25);
+    padding: 3px 9px; border-radius: 999px;
+  }
+  .section-sub { color: var(--text-dim); font-size: 14px; margin-bottom: 24px; max-width: 760px; }
+  h3 { font-size: 16.5px; font-weight: 700; margin: 28px 0 10px; letter-spacing: -.01em; }
+  p { margin-bottom: 12px; color: var(--text); }
+  p.dim, li span.dim { color: var(--text-dim); }
+  ul { margin: 0 0 14px 20px; }
+  li { margin-bottom: 6px; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { font-weight: 700; }
+
+  .tldr {
+    background: linear-gradient(135deg, var(--surface) 0%, #16202B 100%);
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px 30px; margin-bottom: 20px;
+  }
+  .tldr .tag { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--accent); letter-spacing: .12em; font-weight: 600; display: block; margin-bottom: 10px; }
+  .tldr p { font-size: 16px; }
+  .verdict-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }
+  .verdict { background: var(--canvas); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .verdict .v-head { font-size: 13px; font-weight: 800; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .verdict p { font-size: 13px; color: var(--text-dim); margin: 0; line-height: 1.5; }
+
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; white-space: nowrap; }
+  .chip.have { color: var(--accent); background: var(--accent-dim); border: 1px solid rgba(53,194,160,.3); }
+  .chip.partial { color: var(--amber); background: var(--amber-dim); border: 1px solid rgba(232,179,62,.3); }
+  .chip.missing { color: var(--red); background: var(--red-dim); border: 1px solid rgba(240,97,109,.3); }
+  .chip.proposed { color: var(--violet); background: var(--violet-dim); border: 1px solid rgba(167,139,250,.35); }
+  .chip.effort { color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--line); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; }
+  .card h4 { font-size: 15px; font-weight: 800; margin-bottom: 2px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .card .who { font-size: 12px; color: var(--text-faint); font-weight: 600; margin-bottom: 10px; }
+  .card p, .card li { font-size: 13.5px; color: var(--text-dim); }
+  .card ul { margin-left: 16px; }
+  .card li::marker { color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+  th { text-align: left; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  td { padding: 11px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; color: var(--text-dim); }
+  td:first-child { color: var(--text); font-weight: 600; }
+  tr:hover td { background: rgba(26,35,46,.5); }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 6px 6px 2px; }
+  code { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 5px; padding: 1px 6px; font-size: 12.5px; color: var(--blue); }
+
+  .deep { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); padding: 24px 28px; margin-bottom: 20px; }
+  .deep-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .deep-head h3 { margin: 0; font-size: 18px; }
+  .deep .impact { margin-left: auto; }
+
+  .phase { display: flex; gap: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 20px 22px; margin-bottom: 14px; }
+  .phase-badge { flex-shrink: 0; width: 52px; height: 52px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; border: 1px solid var(--line); background: var(--canvas); }
+  .phase-badge .p { font-size: 15px; color: var(--accent); }
+  .phase-badge .w { font-size: 9px; color: var(--text-faint); letter-spacing: .05em; }
+  .phase h4 { font-size: 15.5px; font-weight: 800; margin-bottom: 4px; }
+  .phase p { font-size: 13.5px; color: var(--text-dim); margin-bottom: 8px; }
+  .phase .items { display: flex; flex-wrap: wrap; gap: 8px; }
+  .phase .items span { font-size: 12px; color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--line); padding: 4px 10px; border-radius: 999px; }
+
+  pre {
+    background: #0A0E13; border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; overflow-x: auto; font-size: 12.5px; line-height: 1.6;
+    color: #C9D5E1; margin: 12px 0;
+  }
+  pre .c { color: var(--text-faint); } /* comment */
+  pre .k { color: var(--violet); }     /* key */
+  pre .s { color: var(--accent); }     /* string */
+
+  .note { border-left: 3px solid var(--amber); background: var(--amber-dim); border-radius: 0 10px 10px 0; padding: 12px 18px; font-size: 13.5px; color: var(--text-dim); margin: 14px 0; }
+  .note.violet { border-left-color: var(--violet); background: var(--violet-dim); }
+  .note b { color: var(--text); }
+
+  .sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 6px 24px; font-size: 13px; }
+  .sources li { margin-bottom: 4px; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px; text-align: center; color: var(--text-faint); font-size: 12.5px; }
+  @media (max-width: 720px) {
+    .phase { flex-direction: column; }
+    .deep .impact { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <h1>Hermes Bots · Agent UX Gap Research</h1>
+    <span class="sub">2026-09-16 · branch feat/gallery-ui-blobatar</span>
+    <nav>
+      <a href="#sota">State of the art</a>
+      <a href="#today">Where we are</a>
+      <a href="#gaps">Gap matrix</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#protocol">Protocol draft</a>
+      <a href="#sources">Sources</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ========== TLDR ========== -->
+<section id="tldr">
+  <div class="tldr">
+    <span class="tag">TL;DR</span>
+    <p><strong>Hermes Bots has world-class agent plumbing and below-par agent surfaces.</strong> The transport layer (streaming, tool runs, approvals, interrupt/steer, reconnect replay, multi-bot groups) matches or beats ChatGPT/Claude. But everything the user actually <em>reads and touches</em> — code blocks, links, diffs, plans, artifacts, previews, browsing, voice — is behind the leaders, and several gaps are surprisingly cheap to close: the wire protocol already delivers <code>inline_diff</code> and <code>todo.updated</code> that the app silently drops, and the server already exposes <code>file.attach</code>, <code>image.generate</code>, <code>/api/audio/transcribe</code>, <code>/api/audio/speak</code> that the app never calls.</p>
+    <div class="verdict-grid">
+      <div class="verdict">
+        <div class="v-head"><span class="chip have">Strength</span> Agent control loop</div>
+        <p>Approvals with once/session/always + sudo/secret variants, notification quick-actions, interrupt &amp; steer, replay catch-up. Claude Code-grade consent UX already shipped.</p>
+      </div>
+      <div class="verdict">
+        <div class="v-head"><span class="chip missing">Biggest gap</span> Nothing to look at</div>
+        <p>No artifact/canvas/preview surface of any kind. A phone is a single column — leaders give the agent a second surface. This is where ChatGPT Canvas &amp; Claude Artifacts win.</p>
+      </div>
+      <div class="verdict">
+        <div class="v-head"><span class="chip partial">Quick wins</span> Wire-ready, UI-absent</div>
+        <p><code>inline_diff</code> diffs, <code>todo.updated</code> plan checklists, code copy buttons + language chips, clickable links. Days, not weeks — no protocol changes.</p>
+      </div>
+      <div class="verdict">
+        <div class="v-head"><span class="chip proposed">Differentiator</span> Phone as the body</div>
+        <p>Termux-hosted gateway + termux-api bridge = the agent gets SMS, calls, torch, sensors, TTS, clipboard — consent-gated by the approval system we already have. Nobody in the leader pack does this.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== STATE OF THE ART ========== -->
+<section id="sota">
+  <h2><span class="num">01</span> State of the art — what the leaders ship (Sept 2026)</h2>
+  <p class="section-sub">The 2026 consensus pattern: chat is no longer the product — chat is the <em>control channel</em> for a workspace the agent writes into. Every leader has moved output out of the scrollback and into a structured surface.</p>
+
+  <div class="cards">
+    <div class="card">
+      <h4>ChatGPT Canvas <span class="chip partial">OpenAI</span></h4>
+      <div class="who">Inline editing surface · docs + code</div>
+      <ul>
+        <li>Side-by-side editable document; agent makes <strong>pinpoint inline edits</strong> instead of regenerating — diff-highlighted so you see exactly what changed</li>
+        <li>Selection-scoped requests: highlight a sentence or function, ask for a rewrite of just that</li>
+        <li>Shortcut menus (adjust length, debug code, add comments, port languages)</li>
+        <li>Code: inline suggest-edit-apply loop with syntax highlighting and run/preview for web langs</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Claude Artifacts <span class="chip partial">Anthropic</span></h4>
+      <div class="who">Self-contained mini-app previews</div>
+      <ul>
+        <li>Any substantial output (code, HTML, SVG, MD, React) opens in a dedicated pane — never floods the chat scrollback</li>
+        <li><strong>Instant live preview</strong> of runnable HTML/React in a sandboxed frame</li>
+        <li><strong>Version switching</strong> — every artifact edit keeps history; hop back to v1 with a dropdown</li>
+        <li>Shareable/publishable artifact links; remix culture around them</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Cursor · Claude Code · Codex <span class="chip partial">Agentic IDEs</span></h4>
+      <div class="who">Trust-but-verify work surfaces</div>
+      <ul>
+        <li><strong>Inline diffs</strong> as first-class review UI — approve/reject per hunk before an edit lands</li>
+        <li><strong>Plan / todo checklists</strong> rendered live while the agent works (Claude Code's todo list is its trust anchor)</li>
+        <li>Terminal as a first-class surface — command output, PTY views, slash commands</li>
+        <li>Explicit plan-review stage before autonomous execution</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Operator · Computer Use · Browser-Use <span class="chip partial">Browser agents</span></h4>
+      <div class="who">"Watch it work" viewing</div>
+      <ul>
+        <li>Live viewport of the agent's browser — you <strong>watch</strong> it click and type (OpenAI Operator's signature UX)</li>
+        <li>Session recordings &amp; replay (Cloudflare Browser Run) — audit what the agent did</li>
+        <li>Snapshot/DOM views as lower-bandwidth alternative to video</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Gemini Canvas + Stitch <span class="chip partial">Google</span></h4>
+      <div class="who">Preview + generative design</div>
+      <ul>
+        <li>Live code preview canvas; integration with Stitch (text/sketch → high-fidelity UI)</li>
+        <li>Deep Android integration path — on-device models (Gemini Nano / AICore) for system-level assistant behavior</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Generative UI <span class="chip proposed">Emerging</span></h4>
+      <div class="who">AI renders the interface itself</div>
+      <ul>
+        <li>Responses stop being text-with-markdown and become <strong>charts for trends, forms for actions, tables for comparisons</strong> — model emits structured UI, client renders native widgets</li>
+        <li>Research direction (A2UI, agentic canvases): the canvas is a surface agents <em>read and write</em>, dissolving the chat-vs-canvas boundary</li>
+        <li>Mobile-first versions of this are just starting to appear — open lane for a native app</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ========== WHERE WE ARE ========== -->
+<section id="today">
+  <h2><span class="num">02</span> Where hermes-bots stands today</h2>
+  <p class="section-sub">From a full audit of the codebase (chat rendering, protocol catalog, manifest, data layer). The honest split: excellent control plane, minimal display plane.</p>
+
+  <div class="cards">
+    <div class="card">
+      <h4>Already strong <span class="chip have">Keep</span></h4>
+      <div class="who">Matches or beats the leaders</div>
+      <ul>
+        <li><strong>Streaming</strong> with caret, interim sealing, reader-gated autoscroll + jump-to-latest pill</li>
+        <li><strong>Approvals</strong>: A/B/C choice cards, once/session/always/deny, sudo/secret/clarify variants, notification quick-actions</li>
+        <li><strong>Steering</strong> — interrupt and mid-flight redirect, like ChatGPT's newest steering</li>
+        <li><strong>Tool chips</strong> with humanized labels, duration, expandable args/output</li>
+        <li><strong>Multi-agent</strong> groups + cross-gateway AnyChat rooms — genuinely unique vs. any leader</li>
+        <li>Fleet/Roster + Pulse approval inbox — an operations metaphor no consumer agent has</li>
+        <li>Robust reconnect w/ event replay (512×64 ring)</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Display plane <span class="chip missing">Behind</span></h4>
+      <div class="who">What the user reads</div>
+      <ul>
+        <li>Markdown is hand-rolled: fences, inline code, bold, bullets, headings. <strong>Links aren't rendered at all</strong> (known deferral, <code>MarkdownText.kt:25</code>)</li>
+        <li>Code blocks: monospace box, horizontal scroll — <strong>no highlighting, no copy button, no language chip</strong> (the fence's language token is discarded in <code>splitFences</code>)</li>
+        <li>No tables, no math, no inline images (<code>coil-compose</code> is a declared dependency that is never used)</li>
+        <li>Copy = whole-bubble long-press only; no per-message actions, no regenerate/edit/share</li>
+        <li><code>inline_diff</code> on <code>tool.complete</code> arrives over the wire and is <strong>ignored</strong></li>
+        <li><code>todo.updated</code> events arrive and are <strong>ignored</strong> — no plan/checklist surface</li>
+        <li>Transcripts not cached locally (server refetch only), no search</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Absent surfaces <span class="chip missing">Missing</span></h4>
+      <div class="who">Entire categories</div>
+      <ul>
+        <li><strong>Artifacts/canvas</strong>: none — and the protocol has no artifact concept at all. Closest primitives: unused <code>rendered?</code> message field, <code>file.attach</code>, <code>/api/files/download</code></li>
+        <li><strong>In-app browser</strong>: no WebView, no Custom Tabs, no URL cards. The agent browses server-side (<code>browser_navigate</code>, <code>browser_click</code>, <code>browser_snapshot</code>) and the user sees only a humanized label</li>
+        <li><strong>Voice</strong>: no STT, no TTS (<code>voice.record</code> is catalog-only v2; server REST <code>/api/audio/transcribe</code> + <code>/api/audio/speak</code> exist unused)</li>
+        <li><strong>Files</strong>: gallery image attach only — no documents, no camera capture</li>
+        <li><strong>Image gen</strong>: <code>image.generate</code> catalog'd (v2), never called</li>
+        <li><strong>Terminal</strong>: PTY views deferred since README v1; <code>cli.exec</code>/<code>shell.exec</code> sit in the catalog unused</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note"><b>Manifest reality check:</b> the app requests exactly two permissions — <code>INTERNET</code> and <code>POST_NOTIFICATIONS</code>. Zero device surface (camera/mic/location/SMS/sensors) is exposed to the agent. That's a deliberate, defensible security posture — but it also means the "AI on your phone" story is currently all cloud. The Termux bridge (§4.5) is the way to add device powers <em>without</em> bloating the app's permission surface.</div>
+</section>
+
+<!-- ========== GAP MATRIX ========== -->
+<section id="gaps">
+  <h2><span class="num">03</span> Gap matrix</h2>
+  <p class="section-sub">Every row is verified against the codebase. "Wire-ready" = data already arrives over the protocol; the fix is pure UI. Effort: S ≤ 2 days · M ≤ 1 week · L multi-week · XL quarter-scale.</p>
+
+  <div class="tablewrap">
+  <table>
+    <tr><th style="width:24%">Capability</th><th style="width:9%">Status</th><th style="width:9%">Effort</th><th style="width:29%">What the leaders do</th><th>Hermes detail</th></tr>
+    <tr><td>Clickable links + URL cards</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">S</span></td><td>Auto-linkified; rich preview cards</td><td><code>MarkdownText</code> drops links entirely (documented deferral)</td></tr>
+    <tr><td>Code copy button</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">S</span></td><td>Per-block copy icon in every leader</td><td>Only whole-bubble long-press copy</td></tr>
+    <tr><td>Code language chip</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">S</span></td><td>Lang badge on every fence</td><td>Language token discarded in <code>splitFences()</code></td></tr>
+    <tr><td>Syntax highlighting</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">S–M</span></td><td>Universal; TreeSitter/Prism-grade</td><td>Plain monospace box</td></tr>
+    <tr><td>Tables · math · inline images</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">M</span></td><td>Standard markdown everywhere</td><td>Hand-rolled md covers 6 constructs; <code>coil</code> declared, unused</td></tr>
+    <tr><td>Diff review (<code>inline_diff</code>)</td><td><span class="chip partial">Wire-ready</span></td><td><span class="chip effort">S</span></td><td>Cursor/Claude Code: hunk-level review is the core trust UI</td><td><code>tool.complete</code> carries <code>inline_diff</code> — parsed by <code>ChatModels</code>, never rendered</td></tr>
+    <tr><td>Plan / todo checklist</td><td><span class="chip partial">Wire-ready</span></td><td><span class="chip effort">S</span></td><td>Claude Code todo list = its trust anchor</td><td><code>todo.updated</code> event defined in PROTOCOL.md, never surfaced</td></tr>
+    <tr><td>Per-message actions</td><td><span class="chip partial">Partial</span></td><td><span class="chip effort">S–M</span></td><td>Copy / regenerate / edit / share / branch under every bubble</td><td>Long-press copy only</td></tr>
+    <tr><td>File attachments</td><td><span class="chip partial">Wire-ready</span></td><td><span class="chip effort">S</span></td><td>PDFs/docs in every chat app</td><td><code>file.attach</code> defined in catalog + protocol; UI absent</td></tr>
+    <tr><td>Voice input (STT)</td><td><span class="chip partial">Wire-ready</span></td><td><span class="chip effort">S–M</span></td><td>Dictation button in every leader; full voice-mode in ChatGPT/Gemini</td><td>Server REST <code>/api/audio/transcribe</code> exists unused; <code>voice.record</code> catalog-only</td></tr>
+    <tr><td>TTS / spoken replies</td><td><span class="chip partial">Wire-ready</span></td><td><span class="chip effort">M</span></td><td>ChatGPT Advanced Voice; Gemini Live</td><td><code>/api/audio/speak</code> unused; Android TTS engine available on-device</td></tr>
+    <tr><td>Image generation</td><td><span class="chip partial">Wire-ready</span></td><td><span class="chip effort">S–M</span></td><td>Native in ChatGPT/Gemini apps</td><td><code>image.generate</code> (v2) in catalog, never called</td></tr>
+    <tr><td>Camera capture attach</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">S</span></td><td>Shutter button beside gallery picker</td><td>Photo picker only (image pipeline already built: downscale→base64→<code>image.attach_bytes</code>)</td></tr>
+    <tr><td>Artifact / canvas surface</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">L</span></td><td>Canvas: inline edits + diffs; Artifacts: live preview + versions</td><td>No protocol concept; unused <code>rendered?</code> field is the seed. Needs new RPC (§6)</td></tr>
+    <tr><td>HTML/SVG live preview</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">M–L</span></td><td>Sandboxed instant preview (Claude), Canvas run view (OpenAI)</td><td>Spec <em>forbids</em> WebView (<code>fleet-pulse-ui-spec.md:44</code>) — Custom Tabs is the compliant path, sandboxed WebView the full path</td></tr>
+    <tr><td>"Watch it browse" viewer</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">M</span></td><td>Operator's live viewport; session replay</td><td>Server already runs <code>browser_snapshot</code> — screenshots exist, app never shows them</td></tr>
+    <tr><td>In-app link opening</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">S</span></td><td>Chrome Custom Tabs (Android standard)</td><td>Nothing; not even rendered links to tap</td></tr>
+    <tr><td>Terminal / PTY view</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">M–L</span></td><td>Claude Code / Codex terminals</td><td>Deferred since README v1; <code>cli.exec</code>/<code>shell.exec</code> catalog'd (v1.5)</td></tr>
+    <tr><td>Generative UI (rendered widgets)</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">XL</span></td><td>Charts/forms/tables instead of prose — the 2026 emerging pattern</td><td><code>rendered?</code> payload field already reserved on messages — a real head start</td></tr>
+    <tr><td>Local transcript cache + search</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">M</span></td><td>Full offline history in all leaders</td><td>Server refetch only; DataStore JSON blobs, no Room</td></tr>
+    <tr><td>Phone-as-body (Termux bridge)</td><td><span class="chip missing">Missing</span></td><td><span class="chip effort">L</span></td><td><em>Nobody</em> in the leader pack</td><td>Hermes's relay + approval architecture is the missing half — see §4.5</td></tr>
+  </table>
+  </div>
+</section>
+
+<!-- ========== DEEP DIVES ========== -->
+<section id="deep">
+  <h2><span class="num">04</span> Deep dives &amp; suggestions</h2>
+  <p class="section-sub">The five areas you asked about, plus the Termux play. Each dive ends with a concrete recommendation that respects the Fleet/Pulse spec's constraints.</p>
+
+  <!-- 4.1 code blocks -->
+  <div class="deep">
+    <div class="deep-head">
+      <h3>4.1 · Code blocks — the cheapest credibility win</h3>
+      <span class="chip missing">Missing</span><span class="chip effort effort">Effort S–M</span>
+    </div>
+    <p>Today a fenced block renders as a monospace box with horizontal scroll; the language token from the fence is thrown away by <code>splitFences()</code> and there is no copy affordance — long-press the whole bubble is the only way. Every leader ships the same triad: <strong>language chip, copy button, highlighting</strong>.</p>
+    <h3>Recommendation</h3>
+    <ul>
+      <li><strong>Parse the fence language</strong> (<code>```kotlin</code> → chip label) — trivial change in <code>MarkdownText.kt</code></li>
+      <li><strong>Copy icon on the block header row</strong> with haptic + snackbar, reusing the existing <code>copyOnLongPress</code> plumbing</li>
+      <li><strong>Highlighting without a WebView:</strong> either adopt <code>compose-richtext</code>/Markwon (note: Markwon is View-based; prefer a Compose-native tokenizer) or extend the hand-rolled renderer with a lightweight regex tokenizer for the ~10 languages your bots actually emit (kotlin, python, ts, bash, json, sql, xml, yaml, go, rust). Keywords/strings/comments/numbers covers 90% of perceived quality</li>
+      <li>While in there: <strong>wrapped vs. scroll toggle</strong> (long lines), and line-count cap with "Show all" (the ToolChip already established this pattern)</li>
+      <li>Fix links in the same pass — they're the other documented deferral, and URL cards (favicon + title + domain, via the existing OkHttp stack) make bot research replies dramatically more scannable</li>
+    </ul>
+  </div>
+
+  <!-- 4.2 artifacts -->
+  <div class="deep">
+    <div class="deep-head">
+      <h3>4.2 · Artifacts / canvas — the big one</h3>
+      <span class="chip missing">Missing</span><span class="chip effort effort">Effort L + protocol</span>
+    </div>
+    <p>No artifact concept exists anywhere in the app or the protocol. The leaders' lesson is blunt: <strong>once outputs get big, the chat column is the wrong place for them.</strong> Claude moves them to a pane with versions; ChatGPT moves them to an editable canvas with pinpoint diffs. On a phone you can't do side-by-side — but you can do the mobile-native equivalent.</p>
+    <h3>Recommendation — an artifact sheet, not a canvas</h3>
+    <ul>
+      <li><strong>Surface:</strong> a bottom-sheet / full-screen artifact viewer opened from an inline "artifact card" in the transcript (title, type icon, version badge) — the mobile idiom Claude's app uses</li>
+      <li><strong>Types, phased:</strong> (1) code (reuses §4.1 renderer) and markdown (styled doc view) → (2) SVG (Compose <code>ImageVector</code>/vector parser — no JS needed) → (3) images (<code>image.generate</code> output) → (4) HTML preview last, via the two-step in the note below</li>
+      <li><strong>Versions:</strong> keep an artifact-version stack per session; header shows <code>v3</code> with a back/forward affordance — Claude's most-loved artifact feature and nearly free once artifacts are event-sourced</li>
+      <li><strong>Share/export:</strong> system share sheet + save-to-files via FileProvider — makes artifacts feel like real products, not chat exhaust</li>
+      <li><strong>Seed it with what's already on the wire:</strong> the <code>rendered?</code> field on <code>message.complete</code> is unused — define it as "detached rendered payload" and you have artifacts v0 without touching the turn loop. Full design in §6</li>
+    </ul>
+    <div class="note"><b>Spec tension, resolved:</b> <code>fleet-pulse-ui-spec.md</code> forbids WebView/JS runtimes — keep that rule for the <em>app shell</em>. For artifact preview specifically: (a) code/md/SVG/images render natively, no WebView; (b) HTML gets a <strong>"Open preview" → Chrome Custom Tab</strong> (sandboxed by the browser, not embedded, spec-compliant); (c) if full in-app HTML preview ever becomes non-negotiable, propose a single, tightly-scoped renderer-only <code>WebView</code> isolated from app data as an explicit spec amendment — never quietly.</div>
+  </div>
+
+  <!-- 4.3 browser -->
+  <div class="deep">
+    <div class="deep-head">
+      <h3>4.3 · In-app browser — you already have the data</h3>
+      <span class="chip missing">Missing</span><span class="chip effort effort">Effort M</span>
+    </div>
+    <p>The agent browses server-side — <code>browser_navigate</code>, <code>browser_click</code>, <code>browser_snapshot</code> — and the app reduces all of it to a humanized chip label ("Open page", "Click page"). Meanwhile Operator's single most praised feature is simply <em>letting the user watch</em>.</p>
+    <h3>Recommendation — three tiers</h3>
+    <ul>
+      <li><strong>Tier 1 (S): URL cards + Custom Tabs.</strong> Linkified sources in replies (needs §4.1 links); tapping opens Chrome Custom Tabs — in-app feel, zero WebView, zero spec violation</li>
+      <li><strong>Tier 2 (M): snapshot strip.</strong> <code>browser_snapshot</code> results (already flowing) become a horizontally scrolling thumbnail strip on the tool chip: tap → fullscreen image viewer with the page title + URL + "Open" button. This is Operator's UX at 1% of the cost — no video stream, just the screenshots the agent takes anyway</li>
+      <li><strong>Tier 3 (L, optional): live viewport.</strong> If the gateway ever streams screenshots (or a low-fps MJPEG over the existing WS), a "Watch" button on working-state cards. Defer until Tier 2 proves demand</li>
+    </ul>
+  </div>
+
+  <!-- 4.4 media/voice -->
+  <div class="deep">
+    <div class="deep-head">
+      <h3>4.4 · Media &amp; voice — four server features with zero UI</h3>
+      <span class="chip partial">Wire-ready</span><span class="chip effort effort">Effort S–M each</span>
+    </div>
+    <p>The gateway already implements a media surface the app never calls. Each row below is mostly composer + renderer work on top of an existing endpoint.</p>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Capability</th><th>Already exists</th><th>Missing UI</th></tr>
+      <tr><td>File attach</td><td><code>file.attach {data}</code> (protocol + catalog); 384 MiB WS frame budget</td><td>Document picker in composer + chip + sent-rendering</td></tr>
+      <tr><td>Dictation</td><td>REST <code>/api/audio/transcribe</code></td><td>Mic button in composer → record → transcribe → insert into draft (<code>RECORD_AUDIO</code> permission)</td></tr>
+      <tr><td>Spoken replies</td><td>REST <code>/api/audio/speak</code>; Android on-device TTS as offline fallback</td><td>Per-bot "speak replies" toggle + playback bar on bubbles</td></tr>
+      <tr><td>Image generation</td><td><code>image.generate</code> (v2, catalog'd)</td><td>Composer action + inline result card (reuse §4.2 image viewer)</td></tr>
+      <tr><td>Camera capture</td><td>Entire downscale→JPEG→base64 pipeline built for gallery images</td><td><code>TakePicture</code> contract alongside <code>PickVisualMedia</code></td></tr>
+    </table>
+    </div>
+    <p class="dim" style="margin-top:10px;">Sequence dictation + TTS and you have a workable hands-free mode long before a real voice-mode investment.</p>
+  </div>
+
+  <!-- 4.5 termux -->
+  <div class="deep">
+    <div class="deep-head">
+      <h3>4.5 · Phone-as-body — the Termux:API bridge <span style="font-size:12px;color:var(--text-faint)">(nobody else has this)</span></h3>
+      <span class="chip proposed">Differentiator</span><span class="chip effort effort">Effort L</span>
+    </div>
+    <p>Termux:API exposes 70+ device functions as shell commands. A gateway instance running in Termux (Python/Node — whatever hermes gateways run on) can wrap these as agent tools, and suddenly the agent can <em>act on the physical phone</em>. Critically, hermes already owns the hard part: <strong>the consent layer</strong> — the approval system (once/session/always/deny, sudo variants) is exactly the permission gate phone actions need, and the bot-relay architecture means the phone can host a bot that other gateways' bots can message.</p>
+    <h3>Capability menu (high-value subset)</h3>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Command</th><th>Gives the agent</th><th>Guardrail</th></tr>
+      <tr><td><code>termux-sms-send</code> / <code>-list</code></td><td>Send &amp; read SMS</td><td>Approval always; contact allowlist</td></tr>
+      <tr><td><code>termux-telephony-call</code></td><td>Place calls</td><td>Approval always, never "always"</td></tr>
+      <tr><td><code>termux-contacts-list</code></td><td>Resolve "call Sarah" → number</td><td>Read-only, cache, redact in logs</td></tr>
+      <tr><td><code>termux-location</code></td><td>GPS/network fix</td><td>Approval per read; coarse by default</td></tr>
+      <tr><td><code>termux-sensor</code> / <code>-battery-status</code></td><td>Accelerometer, gyro, battery, step counters → routines ("ping me at 20%")</td><td>Read-only, low risk</td></tr>
+      <tr><td><code>termux-torch on|off</code> / <code>-vibrate</code></td><td>Physical signaling (find-my-phone, alerts)</td><td>Session scope</td></tr>
+      <tr><td><code>termux-tts-speak</code></td><td>On-device TTS (works offline)</td><td>Per-bot toggle</td></tr>
+      <tr><td><code>termux-clipboard-get/set</code></td><td>Read/write clipboard — killer for "send this to the bot" flows</td><td>Approval on read</td></tr>
+      <tr><td><code>termux-camera-photo</code></td><td>Take a photo on demand ("show me the backyard")</td><td>Approval always</td></tr>
+      <tr><td><code>termux-notification</code> / <code>-toast</code></td><td>Local alerts without FCM</td><td>Channel-scoped</td></tr>
+      <tr><td><code>termux-media-player</code></td><td>Play audio files / TTS output</td><td>Session scope</td></tr>
+      <tr><td><code>termux-wifi-connectioninfo</code></td><td>SSID/diagnostics for "why is my network slow"</td><td>Redact BSSID</td></tr>
+    </table>
+    </div>
+    <h3>Recommended shape</h3>
+    <ul>
+      <li><strong>Keep the app's permission surface clean:</strong> the app keeps <code>INTERNET</code> + <code>POST_NOTIFICATIONS</code>; all device access lives in the Termux-hosted gateway sandbox (user explicitly installed and owns it). Android permissions land on the Termux:API app, not hermes-bots</li>
+      <li><strong>Tool namespaced as <code>phone.*</code></strong> with per-tool default approval policy (SMS/call/photo = always-ask; sensors/battery = auto; clipboard-read = ask)</li>
+      <li><strong>Surface in Pulse:</strong> phone actions appear as existing tool chips + approval cards — no new UI paradigms needed; maybe a "This Phone" machine card in Fleet when a Termux gateway is paired</li>
+      <li><strong>Marketing line writes itself:</strong> "The AI agent that lives in your pocket and can actually use the phone." No leader ships this</li>
+    </ul>
+  </div>
+
+  <!-- 4.6 diffs & todos -->
+  <div class="deep">
+    <div class="deep-head">
+      <h3>4.6 · Diffs &amp; plan checklists — free trust, already on the wire</h3>
+      <span class="chip partial">Wire-ready</span><span class="chip effort effort">Effort S</span>
+    </div>
+    <p>Two of the highest-trust UI elements in agentic coding — inline diffs (Cursor/Claude Code review flow) and live todo checklists (Claude Code's plan anchor) — are <strong>already defined in PROTOCOL.md and already arriving</strong>: <code>inline_diff</code> on <code>tool.complete</code>, and <code>todo.updated</code> interleaved during turns. The app parses the events and renders neither.</p>
+    <ul>
+      <li><strong>Diff view:</strong> red/green monospace rows inside the expandable ToolChip (or a sheet for long diffs), matching the fleet dark palette. ~1–2 days</li>
+      <li><strong>Todo/plan card:</strong> a pinned collapsible checklist under the working-status while streaming — items flip to done as <code>todo.updated</code> events land. This single component does more for perceived competence than anything else on this page</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ========== ROADMAP ========== -->
+<section id="roadmap">
+  <h2><span class="num">05</span> Suggested roadmap</h2>
+  <p class="section-sub">Sequenced by leverage-per-effort and dependency order. P0–P1 need no protocol changes at all.</p>
+
+  <div class="phase">
+    <div class="phase-badge"><span class="p">P0</span><span class="w">DAYS</span></div>
+    <div>
+      <h4>Read the transcript properly <span class="chip have">No protocol change</span></h4>
+      <p>The chat <em>is</em> the product until artifacts exist — make it stop feeling 2022. Everything here is contained in <code>MarkdownText</code>/<code>ChatScreen</code>.</p>
+      <div class="items"><span>Links + URL cards</span><span>Code copy button</span><span>Language chips</span><span>Lightweight highlighting</span><span>Tables</span><span>inline_diff rendering</span><span>todo.updated checklist</span><span>Custom Tabs for taps</span></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-badge"><span class="p">P1</span><span class="w">WEEKS</span></div>
+    <div>
+      <h4>Media &amp; input parity <span class="chip have">Server already supports all of it</span></h4>
+      <p>Turn on the endpoints the gateway already runs, plus the two cheap input adds.</p>
+      <div class="items"><span>file.attach UI</span><span>Camera capture</span><span>Dictation → /api/audio/transcribe</span><span>TTS replies</span><span>image.generate card</span><span>Per-message actions (copy/regenerate/share)</span></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-badge"><span class="p">P2</span><span class="w">MULTI-WK</span></div>
+    <div>
+      <h4>Artifact surface <span class="chip proposed">Protocol addition (§6)</span></h4>
+      <p>Artifact sheet with versions: code/md first, SVG/images next, HTML preview via Custom Tabs. Seed from <code>rendered</code> payloads.</p>
+      <div class="items"><span>artifact.* RPC + events</span><span>Inline artifact cards</span><span>Version history</span><span>Native renderers</span><span>Share/export</span><span>Custom Tab preview</span></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-badge"><span class="p">P3</span><span class="w">MULTI-WK</span></div>
+    <div>
+      <h4>Watch it work</h4>
+      <p>Transparency surfaces for server-side action — snapshots first, terminal later.</p>
+      <div class="items"><span>Browser snapshot strip + viewer</span><span>Local transcript cache (Room) + search</span><span>PTY terminal view for cli.exec/shell.exec</span><span>(optional) live browser viewport</span></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-badge"><span class="p">P4</span><span class="w">BETA</span></div>
+    <div>
+      <h4>Phone as the body <span class="chip proposed">Differentiator</span></h4>
+      <p>Termux-hosted gateway + <code>phone.*</code> tool bridge, approval-gated. Ship as an opt-in "Hermes Local" pairing flow with a setup guide.</p>
+      <div class="items"><span>termux-api tool wrapper</span><span>Per-tool approval policies</span><span>"This Phone" fleet card</span><span>Find-my-phone / battery routines</span><span>Clipboard bridge</span></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-badge"><span class="p">P5</span><span class="w">MOON</span></div>
+    <div>
+      <h4>Generative UI <span class="chip proposed">Watch the leaders</span></h4>
+      <p>When models emit structured UI (<code>rendered</code> payloads → charts/forms/tables as native Compose widgets), hermes's clean event stream is the ideal substrate. Re-evaluate after P2 lands the rendered-payload plumbing.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ========== PROTOCOL DRAFT ========== -->
+<section id="protocol">
+  <h2><span class="num">06</span> Protocol draft — artifact support <span class="chip proposed">Proposal only</span></h2>
+  <p class="section-sub">PROTOCOL.md is the authoritative wire contract — nothing below exists today. This is a starting point for a spec PR, designed to reuse the existing event-stream and approval idioms (names follow the established <code>domain.verb</code> style).</p>
+
+<pre>
+<span class="c">// --- artifacts: detached rendered outputs, versioned per session ---</span>
+
+<span class="c">// client asks server to promote/refresh an artifact (or agent does it unprompted)</span>
+{ "method": "artifact.update",
+  "params": { "session_id": "…", "artifact_id": "site-v1",
+              "kind": "html" | "markdown" | "code" | "svg" | "image" | "data",
+              "title": "Landing page", "language": "html",
+              "content": "…",           <span class="c">// full content (small artifacts)</span>
+              "version": 3, "parent_version": 2 } }
+
+<span class="c">// streamed as events during a turn (same interleaving as tool.* events)</span>
+"artifact.opened"   { artifact_id, kind, title, version }
+"artifact.delta"    { artifact_id, version, text }        <span class="c">// stream large bodies</span>
+"artifact.closed"   { artifact_id, version, final: true }
+
+<span class="c">// history + fetch (mirrors session.events.since semantics)</span>
+"artifact.list"     → [{ artifact_id, kind, title, latest_version, updated_at }]
+"artifact.get"      { artifact_id, version? } → { content, kind, title, … }
+
+<span class="c">// client-side rendering hint on messages (formalizes the unused `rendered` field)</span>
+message.complete { …, "rendered": { "artifact_id": "site-v1", "version": 3 } }
+
+<span class="c">// phone-as-body tools on a Termux-hosted gateway (P4; approval-policied)</span>
+tools: "phone.sms.send", "phone.sms.read", "phone.call", "phone.contacts",
+       "phone.location", "phone.sensors", "phone.battery", "phone.torch",
+       "phone.tts", "phone.clipboard", "phone.camera", "phone.notify"
+</pre>
+
+  <div class="note violet"><b>Design notes:</b> artifacts are session-scoped and version-pinned so reconnect replay (<code>session.events.since</code>) reconstructs artifact state for free, exactly like tool runs today. <code>artifact.update</code> with <code>parent_version</code> enables the Claude-style version chain. The <code>phone.*</code> namespace is gateway-local — it requires zero changes to the app-facing protocol beyond normal tool chips + approvals.</div>
+</section>
+
+<!-- ========== SOURCES ========== -->
+<section id="sources">
+  <h2><span class="num">07</span> Sources</h2>
+  <p class="section-sub">Web research conducted 2026-09-16, plus the full local code audit (ChatScreen.kt, MarkdownText.kt, ChatModels.kt, Catalog.kt, PROTOCOL.md, AndroidManifest.xml, app/build.gradle.kts, design/fleet-pulse-ui-spec.md).</p>
+  <ul class="sources">
+    <li><a href="https://openai.com/index/introducing-canvas/">OpenAI — Introducing Canvas</a></li>
+    <li><a href="https://www.shareduo.com/blog/claude-artifacts-vs-chatgpt-canvas">ShareDuo — Claude Artifacts vs ChatGPT Canvas (2026)</a></li>
+    <li><a href="https://instapods.com/blog/claude-artifacts-vs-chatgpt-canvas/">Instapods — ChatGPT Artifacts vs Claude Artifacts (2026)</a></li>
+    <li><a href="https://academy.claude.com/tutorials/use-artifacts-to-visualize-and-create-ai-apps-without-ever-writing-a-line-of-code">Claude Academy — Artifacts tutorial</a></li>
+    <li><a href="https://www.requesty.ai/blog/agentic-coding-tools-compared-2026-claude-code-cursor-codex-aider">Requesty — Claude Code vs Cursor vs Codex vs Aider (2026)</a></li>
+    <li><a href="https://www.developersdigest.tech/blog/what-is-an-ai-coding-agent-2026">Developers Digest — AI coding agent UI patterns (inline diffs, plan review)</a></li>
+    <li><a href="https://www.braintrust.dev/articles/best-ai-coding-tools-2026">Braintrust — Best AI coding tools 2026</a></li>
+    <li><a href="https://nimbalyst.com/blog/best-ai-coding-agents-2026/">Nimbalyst — 15 coding agents compared (harnesses/IDEs/visual workspaces)</a></li>
+    <li><a href="https://openai.com/index/computer-using-agent/">OpenAI — Computer-Using Agent (live "watching" view)</a></li>
+    <li><a href="https://blog.cloudflare.com/browser-run-for-ai-agents/">Cloudflare — Browser Run for AI agents (record/replay)</a></li>
+    <li><a href="https://zylos.ai/research/2026-02-08-computer-use-gui-agents/">Zylos — Computer Use &amp; GUI Agents: State of the Art (2026)</a></li>
+    <li><a href="https://www.turingpost.com/p/computer-use-ai-agents">Turing Post — 17 computer-use agents (2026)</a></li>
+    <li><a href="https://browser-use.com/">Browser Use — open-source browser agent</a></li>
+    <li><a href="https://www.uxtigers.com/post/2026-predictions-halfway">UX Tigers — 2026 AI &amp; UX predictions, mid-year check</a></li>
+    <li><a href="https://www.progress.com/blogs/designing-on-the-canvas-with-agents">Progress — Agentic design canvases (agents read/write the canvas)</a></li>
+    <li><a href="https://fuselabcreative.com/ui-design-for-ai-agents/">Fuselab — Agent UX: designing UI for AI agents (2026)</a></li>
+    <li><a href="https://tijocreative.com/articles/the-interface-is-disappearing-ai-agents-future-ux">Tijo — The interface is disappearing (edit/recover patterns)</a></li>
+    <li><a href="https://wiki.termux.com/wiki/Termux:API">Termux Wiki — Termux:API command reference</a></li>
+    <li><a href="https://riddhiraj.hashnode.dev/how-to-use-termux-api-commands-in-termux">Termux API Commands 101</a></li>
+    <li><a href="https://www.youtube.com/watch?v=RSoy6zNamdM">"Don't Build AI Apps in 2026 Without This" — generative UI (charts/forms/tables)</a></li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  hermes-bots · agent UX gap research · generated 2026-09-16 · design/agent-ux-gap-research.html
+</footer>
+
+</body>
+</html>

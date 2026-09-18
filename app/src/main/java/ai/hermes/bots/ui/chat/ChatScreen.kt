@@ -2,8 +2,14 @@ package ai.hermes.bots.ui.chat
 
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.ApprovalCard
+import ai.hermes.bots.data.ApprovalPinPolicy
 import ai.hermes.bots.data.ChatItem
+import ai.hermes.bots.data.ChatStream
+import ai.hermes.bots.data.DiffLineKind
+import ai.hermes.bots.data.DiffText
 import ai.hermes.bots.data.ItemKind
+import ai.hermes.bots.data.TodoItem
+import ai.hermes.bots.data.TodoStatus
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.ui.components.AssistantBubbleShape
 import ai.hermes.bots.ui.components.ChatComposer
@@ -24,6 +30,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +39,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,9 +56,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Warning
@@ -77,6 +89,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -84,14 +97,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
@@ -321,7 +338,13 @@ fun ChatScreen(
                 val last = ui.items.lastOrNull()
                 val alreadyInline = last?.kind == ItemKind.ERROR && last.text == err
                 if (!alreadyInline) {
-                    ai.hermes.bots.ui.components.ErrorLine(raw = err, botName = botName)
+                    // Incident 2026-09-16: the banner cleared only on a successful send —
+                    // now dismissible like every other line.
+                    ai.hermes.bots.ui.components.ErrorLine(
+                        raw = err,
+                        botName = botName,
+                        onDismiss = { vm.dismissError() },
+                    )
                 }
             }
             if (ui.loading) {
@@ -372,12 +395,22 @@ fun ChatScreen(
                                             is BubbleRow.User -> BubbleUserView(bubble.item)
                                             is BubbleRow.Bot -> BubbleBotView(bubble.item, botName)
                                             is BubbleRow.Work -> BubbleWorkGroup(bubble.items)
-                                            is BubbleRow.Always -> BubbleAlwaysView(bubble.item, botName)
+                                            is BubbleRow.Always -> BubbleAlwaysView(
+                                                bubble.item,
+                                                botName,
+                                                onDismissItem = vm::dismissItem,
+                                                onInterruptStall = vm::interrupt,
+                                            )
                                         }
                                     }
                                 } else {
                                     when (val row = rows[idx]) {
-                                        is TranscriptRow.Message -> ChatItemView(row.item, botName)
+                                        is TranscriptRow.Message -> ChatItemView(
+                                            row.item,
+                                            botName,
+                                            onDismissItem = vm::dismissItem,
+                                            onInterruptStall = vm::interrupt,
+                                        )
                                         is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
                                     }
                                 }
@@ -417,9 +450,19 @@ fun ChatScreen(
                     }
                 }
             }
+            // Agent-ux P0 (spec §5): the live plan checklist. Sits above the working strip
+            // and survives until the next todo.updated replaces it (desktop plan-anchor
+            // behavior); user-collapsible so it never traps the transcript.
+            if (ui.todo.isNotEmpty()) {
+                TodoCard(ui.todo)
+            }
+            // Gated on streaming too (incident 2026-09-16): the VM clears statusText on
+            // complete/error/stall/interrupt, and this gate guarantees the "Working —"
+            // strip can never outlive a live turn even if an event arrives out of order.
             AnimatedVisibility(
-                visible = ui.statusText != null,
+                visible = ui.streaming && ui.statusText != null,
                 enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
+                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
             ) {
                 ui.statusText?.let {
                     WorkingStatus(
@@ -429,17 +472,48 @@ fun ChatScreen(
                     )
                 }
             }
+            // Incident 2026-09-16: resolved/expired cards used to stay pinned forever.
+            // ApprovalPinPolicy owns the lifetime: an active card always shows; a resolved
+            // card stays until the user clears it (X on the card); an expired card lingers
+            // EXPIRED_LINGER_MS so the state is seen, then auto-dismisses. A fresh
+            // approval resets dismissal, which is what lets it replace the pinned card.
             var lastApproval by remember { mutableStateOf<ApprovalCard?>(null) }
-            LaunchedEffect(ui.approval) { if (ui.approval != null) lastApproval = ui.approval }
+            var approvalDismissed by remember { mutableStateOf(false) }
+            LaunchedEffect(ui.approval) {
+                if (ui.approval != null) {
+                    lastApproval = ui.approval
+                    approvalDismissed = false
+                }
+            }
+            LaunchedEffect(ui.approvalExpired) {
+                if (ui.approvalExpired) {
+                    delay(ApprovalPinPolicy.EXPIRED_LINGER_MS)
+                    approvalDismissed = true
+                }
+            }
             val pinnedCard = ui.approval ?: lastApproval
-            val showApproval = pinnedCard != null &&
-                (ui.approval != null || ui.approvalResolved != null || ui.approvalExpired)
+            val showApproval = ApprovalPinPolicy.visible(
+                hasCard = pinnedCard != null,
+                active = ui.approval != null,
+                resolved = ui.approvalResolved,
+                expired = ui.approvalExpired,
+                dismissed = approvalDismissed,
+            )
             AnimatedVisibility(
                 visible = showApproval,
                 enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
+                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
             ) {
                 if (pinnedCard != null) {
-                    ApprovalCardView(pinnedCard, ui.approvalResolved, ui.approvalExpired, onRespond = vm::respond)
+                    ApprovalCardView(
+                        pinnedCard,
+                        ui.approvalResolved,
+                        ui.approvalExpired,
+                        onRespond = vm::respond,
+                        // X only once the card is no longer the live question — an active
+                        // approval is the turn's blocking state, not a stuck element.
+                        onDismiss = if (ui.approval == null) ({ approvalDismissed = true }) else null,
+                    )
                 }
             }
             if (canSend) {
@@ -456,8 +530,13 @@ fun ChatScreen(
                     onSend = {
                         tick()
                         userScrolledUp = false // the sender wants eyes on the new round
-                        vm.send(draft)
-                        draft = ""
+                        // Belt-and-braces: during a running turn the trailing button is
+                        // stop/steer only, and prompt.submit on a busy session would just
+                        // draw RPC 4091 — never send here.
+                        if (!ui.streaming) {
+                            vm.send(draft)
+                            draft = ""
+                        }
                     },
                     onSteer = {
                         tick()
@@ -498,7 +577,12 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ChatItemView(item: ChatItem, botName: String) {
+private fun ChatItemView(
+    item: ChatItem,
+    botName: String,
+    onDismissItem: ((String) -> Unit)? = null,
+    onInterruptStall: (() -> Unit)? = null,
+) {
     val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp
     when (item.kind) {
         ItemKind.USER -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -534,8 +618,24 @@ private fun ChatItemView(item: ChatItem, botName: String) {
             }
         }
         ItemKind.TOOL -> ToolChip(item)
-        // The one inline system-line style, shared with the banner (A28).
-        ItemKind.ERROR -> ai.hermes.bots.ui.components.ErrorLine(raw = item.text, botName = botName)
+        // The one inline system-line style, shared with the banner (A28). Id prefixes carry
+        // the client-side affordances (ChatStream KDoc): "stall-"/"quiet-" watchdog lines
+        // gain an Interrupt action, "warn-" lines render server warning text verbatim —
+        // every line is dismissible (incident 2026-09-16: nothing may be undownloadable
+        // from the screen).
+        ItemKind.ERROR -> {
+            val stall = item.id.startsWith(ChatStream.STALL_ID_PREFIX)
+            val quiet = item.id.startsWith(ChatStream.QUIET_ID_PREFIX)
+            val warn = item.id.startsWith(ChatStream.WARNING_ID_PREFIX)
+            ai.hermes.bots.ui.components.ErrorLine(
+                raw = item.text,
+                botName = botName,
+                verbatim = stall || quiet || warn,
+                onDismiss = onDismissItem?.let { onDismiss -> { onDismiss(item.id) } },
+                actionLabel = if (stall || quiet) "Interrupt" else null,
+                onAction = if (stall || quiet) onInterruptStall else null,
+            )
+        }
     }
 }
 
@@ -594,7 +694,9 @@ private fun ToolChip(item: ChatItem) {
     var open by remember(item.id) { mutableStateOf(false) }
     // Q7 (QA 2026-09-14): "Show all" unclamps the summary + output inside the chip.
     var showAll by remember(item.id) { mutableStateOf(false) }
-    val expandable = item.summary != null || item.text.isNotBlank() || item.outputText != null
+    // Agent-ux P0: a diff alone is reason enough to expand — it's the review surface.
+    val expandable = item.summary != null || item.text.isNotBlank() ||
+        item.outputText != null || item.inlineDiff != null
     // Q8: humane label on the chip face; the raw name stays in the expandable detail.
     val toolLabel = ai.hermes.bots.ui.util.Humanize.toolLabel(item.toolName)
     // Soft entrance for newly appearing chips (A8).
@@ -647,6 +749,24 @@ private fun ToolChip(item: ChatItem) {
                             "· " + String.format(Locale.US, "%.1fs", it),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // Agent-ux P0 (spec §4): the collapsed chip's diff preview is a
+                    // Cursor-style +N −M badge; the rows themselves render when expanded.
+                    item.inlineDiff?.let { raw ->
+                        val (added, removed) = remember(item.id, raw) { DiffText.addedRemoved(raw) }
+                        Text(
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.tertiary)) {
+                                    append("+$added")
+                                }
+                                append("  ")
+                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.error)) {
+                                    append("−$removed")
+                                }
+                            },
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelSmall,
                         )
                     }
                     if (expandable) {
@@ -707,7 +827,9 @@ private fun ToolChip(item: ChatItem) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (item.summary != null || item.text.isNotBlank() || item.outputText != null) {
+                    // Agent-ux P0 (spec §4): tool.complete `inline_diff?` as red/green rows.
+                    item.inlineDiff?.let { DiffView(it, showAll) }
+                    if (expandable) {
                         Text(
                             if (showAll) "Show less" else "Show all",
                             style = MaterialTheme.typography.labelMedium,
@@ -724,8 +846,140 @@ private fun ToolChip(item: ChatItem) {
     }
 }
 
+/**
+ * Agent-ux P0 (spec §4): unified-diff rows inside the expandable ToolChip — the review
+ * surface Cursor/Claude Code made the trust anchor. Rows share one horizontal scroll so a
+ * long line stays aligned across the whole hunk; collapsed shows a short preview, the
+ * chip's existing "Show all" reveals the capped full diff (DiffText.MAX_LINES).
+ */
 @Composable
-private fun ApprovalCardView(card: ApprovalCard, resolved: String?, expired: Boolean, onRespond: (String) -> Unit) {
+private fun DiffView(raw: String, expandedAll: Boolean) {
+    val previewLines = 8
+    val result = remember(raw) { DiffText.parse(raw) }
+    val colors = MaterialTheme.colorScheme
+    val diffScroll = rememberScrollState()
+    Column(Modifier.padding(top = 6.dp)) {
+        val rows = if (expandedAll) result.lines else result.lines.take(previewLines)
+        rows.forEach { line ->
+            val (color, bg) = when (line.kind) {
+                DiffLineKind.ADD -> colors.tertiary to colors.tertiaryContainer.copy(alpha = 0.32f)
+                DiffLineKind.DEL -> colors.error to colors.errorContainer.copy(alpha = 0.32f)
+                DiffLineKind.HUNK -> colors.primary to Color.Transparent
+                DiffLineKind.FILE, DiffLineKind.META -> colors.onSurfaceVariant to Color.Transparent
+                DiffLineKind.CONTEXT -> colors.onSurface to Color.Transparent
+            }
+            Text(
+                line.text,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelSmall,
+                color = color,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(bg)
+                    .horizontalScroll(diffScroll)
+                    .padding(horizontal = 4.dp),
+            )
+        }
+        if (result.truncated) {
+            Text(
+                "…diff truncated",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Agent-ux P0 (spec §5): the pinned plan checklist fed by todo.updated events. Header
+ * carries done/total like the desktop plan anchor; per-item glyphs: outlined check (done),
+ * pulsing dot (active), hollow circle (pending).
+ */
+@Composable
+private fun TodoCard(items: List<TodoItem>) {
+    // Saveable: collapse survives rotation like every other screen-level UI state.
+    var collapsed by rememberSaveable { mutableStateOf(false) }
+    val done = items.count { it.status == TodoStatus.DONE }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { collapsed = !collapsed },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Plan",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "  $done/${items.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    if (collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (collapsed) "Expand" else "Collapse",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (!collapsed) {
+                items.forEach { todo ->
+                    Row(
+                        Modifier.padding(top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        when (todo.status) {
+                            TodoStatus.DONE -> Icon(
+                                Icons.Outlined.CheckCircle,
+                                contentDescription = "Done",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                            TodoStatus.ACTIVE -> ai.hermes.bots.ui.components.PulsingDot(dotSize = 8.dp)
+                            TodoStatus.PENDING -> Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
+                            )
+                        }
+                        Text(
+                            todo.content,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (todo.status == TodoStatus.DONE) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApprovalCardView(
+    card: ApprovalCard,
+    resolved: String?,
+    expired: Boolean,
+    onRespond: (String) -> Unit,
+    onDismiss: (() -> Unit)? = null,
+) {
     val kindLabel = when (card.kind) {
         Catalog.EVENT_CLARIFY_REQUEST -> "Question"
         Catalog.EVENT_SUDO_REQUEST -> "Elevated access requested"
@@ -737,8 +991,26 @@ private fun ApprovalCardView(card: ApprovalCard, resolved: String?, expired: Boo
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            // Kind demoted to an overline; the ask itself is the title (A13).
-            Text(kindLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Kind demoted to an overline; the ask itself is the title (A13).
+                Text(
+                    kindLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onDismiss != null) {
+                    // 48 dp target (fleet-pulse-ui-spec §2); the icon is the visual only.
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Dismiss",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
             Text(
                 card.command ?: kindLabel,
                 style = MaterialTheme.typography.titleSmall,
@@ -1041,9 +1313,24 @@ private fun BubbleWorkGroup(items: List<ChatItem>) {
 
 /** Relay lines and errors: distinct, always visible — errors keep the shared ErrorLine. */
 @Composable
-private fun BubbleAlwaysView(item: ChatItem, botName: String) {
+private fun BubbleAlwaysView(
+    item: ChatItem,
+    botName: String,
+    onDismissItem: ((String) -> Unit)? = null,
+    onInterruptStall: (() -> Unit)? = null,
+) {
     if (item.kind == ItemKind.ERROR) {
-        ai.hermes.bots.ui.components.ErrorLine(raw = item.text, botName = botName)
+        val stall = item.id.startsWith(ChatStream.STALL_ID_PREFIX)
+        val quiet = item.id.startsWith(ChatStream.QUIET_ID_PREFIX)
+        val warn = item.id.startsWith(ChatStream.WARNING_ID_PREFIX)
+        ai.hermes.bots.ui.components.ErrorLine(
+            raw = item.text,
+            botName = botName,
+            verbatim = stall || quiet || warn,
+            onDismiss = onDismissItem?.let { onDismiss -> { onDismiss(item.id) } },
+            actionLabel = if (stall || quiet) "Interrupt" else null,
+            onAction = if (stall || quiet) onInterruptStall else null,
+        )
         return
     }
     val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp

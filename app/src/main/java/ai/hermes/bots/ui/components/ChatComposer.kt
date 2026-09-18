@@ -43,6 +43,14 @@ import androidx.compose.ui.unit.dp
  * The old separate "Steer" button is gone (steering stays on IME Send).
  * Image attach: a leading + queues an image (image.attach_bytes); the pending chip
  * shows above the field until the send clears it.
+ *
+ * Incident 2026-09-16 (steering had NO visible affordance on keyboards without a usable
+ * IME Send): while streaming, a compact secondary send circle appears whenever the draft
+ * is submittable, sitting NEXT TO the stop circle — that respects the one-trailing-action
+ * design language (the small tonal circle reads as an accessory to the primary stop, and
+ * disappears again when the draft clears) while making steer submission always visible.
+ * Stop stays one tap away in every state; the primary send path can never fire a
+ * prompt.submit during a running turn (busy sessions would only get RPC 4091).
  */
 @Composable
 fun ChatComposer(
@@ -142,19 +150,40 @@ fun ChatComposer(
     Spacer(Modifier.width(6.dp))
     Crossfade(targetState = streaming, animationSpec = tween(200), label = "send-stop") { isStreaming ->
       if (isStreaming) {
-        IconButton(onClick = onInterrupt, modifier = Modifier.size(48.dp)) {
-          Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.errorContainer,
-            modifier = Modifier.size(40.dp),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Box(
-                Modifier
-                  .size(12.dp)
-                  .clip(RoundedCornerShape(2.dp))
-                  .background(MaterialTheme.colorScheme.error),
-              )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          if (canSubmit) {
+            // 48 dp target (fleet-pulse-ui-spec §2); the 32 dp circle is the visual only.
+            IconButton(onClick = onSteer, modifier = Modifier.size(48.dp)) {
+              Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.size(32.dp),
+              ) {
+                Box(contentAlignment = Alignment.Center) {
+                  Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Send as steer",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(16.dp),
+                  )
+                }
+              }
+            }
+          }
+          IconButton(onClick = onInterrupt, modifier = Modifier.size(48.dp)) {
+            Surface(
+              shape = CircleShape,
+              color = MaterialTheme.colorScheme.errorContainer,
+              modifier = Modifier.size(40.dp),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Box(
+                  Modifier
+                    .size(12.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.error),
+                )
+              }
             }
           }
         }

@@ -215,8 +215,12 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // The whole row toggles — thumb-sized target, not just the switch.
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable { vm.setNotificationsEnabled(!notificationsEnabled) },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -351,7 +355,10 @@ private fun ImportFleetDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add gateways") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
                     "Paste a shared fleet config — sign-ins come with it and stay on this phone.",
                     style = MaterialTheme.typography.bodySmall,

@@ -52,6 +52,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -369,12 +371,58 @@ fun RosterScreen(
     }
 
     sectionFor?.let { m ->
+        // Tap, don't type: pick from sections already in use, or choose "New section…"
+        // to name one (the only step that needs the keyboard).
+        val existing = fleet.rows.mapNotNull { it.sectionId }.filter { it.isNotBlank() }.distinct().sorted()
         var text by remember(m) { mutableStateOf(m.sectionId.orEmpty()) }
+        var typingNew by remember(m) { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { sectionFor = null },
             title = { Text("Move to section") },
             text = {
-                OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Section name (leave blank for Bots)") }, singleLine = true)
+                if (typingNew) {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        label = { Text("New section name") },
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                typingNew = false
+                                text = m.sectionId.orEmpty()
+                            }) { Icon(Icons.Filled.Clear, contentDescription = "Pick from list instead") }
+                        },
+                    )
+                } else {
+                    var expanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+                        OutlinedTextField(
+                            value = text.ifBlank { "Bots (no section)" },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Section") },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        )
+                        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Bots (no section)") },
+                                onClick = { text = ""; expanded = false },
+                            )
+                            existing.forEach { s ->
+                                DropdownMenuItem(text = { Text(s) }, onClick = { text = s; expanded = false })
+                            }
+                            DropdownMenuItem(
+                                text = { Text("New section…") },
+                                onClick = {
+                                    text = ""
+                                    typingNew = true
+                                    expanded = false
+                                },
+                            )
+                        }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {

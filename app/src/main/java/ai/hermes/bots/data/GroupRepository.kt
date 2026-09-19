@@ -17,7 +17,13 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
 
-data class GroupCaps(val supported: Boolean, val protocolVersion: String, val driverReady: Boolean)
+data class GroupCaps(
+    val supported: Boolean,
+    val protocolVersion: String,
+    val driverReady: Boolean,
+    /** Server's ceiling for one groups.log fetch (PROTOCOL.md §5.6). */
+    val maxLogLimit: Int = 100,
+)
 
 data class GroupRoom(
     val connectionId: String,
@@ -36,6 +42,8 @@ data class GroupLogEntry(
     val actor: String?,
     val text: String,
     val raw: JsonObject,
+    /** Per-room monotonic sequence (groups.log delta contract, PROTOCOL.md §5.6). */
+    val seq: Long = 0L,
 )
 
 /**
@@ -83,6 +91,7 @@ class GroupRepository(private val manager: GatewayManager) {
                 supported = true,
                 protocolVersion = str(r, "protocol_version") ?: "?",
                 driverReady = (r["driver"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false,
+                maxLogLimit = (r["max_log_limit"] as? JsonPrimitive)?.content?.toIntOrNull()?.takeIf { it > 0 } ?: 100,
             )
         } catch (e: RpcException) {
             if (e.isMethodNotFound()) GroupCaps(supported = false, protocolVersion = "?", driverReady = false) else throw e
@@ -115,7 +124,7 @@ class GroupRepository(private val manager: GatewayManager) {
         return room
     }
 
-    suspend fun roomState(connectionId: String, roomId: String): GroupRoomState {
+    suspend fun roomState(connectionId: String, roomId: String, sinceSeq: Long = 0L): GroupRoomState {
         val result = gateway(connectionId).request(
             Catalog.METHOD_GROUPS_STATE,
             buildJsonObject { put("room_id", roomId) },
@@ -123,11 +132,13 @@ class GroupRepository(private val manager: GatewayManager) {
         val room = (result["room"] as? JsonObject)?.let { parseRoomPublic(connectionId, it) }
         // groups.state carries no transcript — the room log lives behind groups.log
         // (methods_groups.py:489 passthrough to gateway.hosted_rooms.read_events).
+        // Fetch as a delta from the caller's last seen seq so long rounds keep
+        // arriving instead of freezing at the first window (PROTOCOL.md §5.6).
         val logResult = gateway(connectionId).request(
             Catalog.METHOD_GROUPS_LOG,
             buildJsonObject {
                 put("room_id", roomId)
-                put("since_seq", 0)
+                put("since_seq", sinceSeq)
                 put("limit", 100)
             },
         )
@@ -309,7 +320,28 @@ class GroupRepository(private val manager: GatewayManager) {
                 actor = actor,
                 text = text,
                 raw = o,
+                seq = (o["seq"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
             )
+        }
+
+        /**
+         * Merge a groups.log delta into the transcript kept by the chat screen.
+         * First fetch (lastSeq 0) replaces; later deltas append only strictly-newer
+         * seqs. A server that ignores since_seq and replays old events changes
+         * nothing; an unsequenced server (no seq on events) falls back to the old
+         * replace-per-poll behavior. Returns the merged list and the seq to send as
+         * the next since_seq.
+         */
+        fun mergeLog(previous: List<GroupLogEntry>, delta: List<GroupLogEntry>, lastSeq: Long): Pair<List<GroupLogEntry>, Long> {
+            if (lastSeq == 0L) return delta to (delta.maxOfOrNull { it.seq } ?: 0L)
+            if (delta.isEmpty()) return previous to lastSeq
+            if (delta.all { it.seq == 0L }) return delta to lastSeq
+            val fresh = delta.filter { it.seq > lastSeq }
+            if (fresh.isEmpty()) return previous to lastSeq
+            val merged = (previous + fresh).distinctBy {
+                it.seq.takeIf { s -> s > 0 }?.toString() ?: (it.eventId ?: it.raw.toString())
+            }
+            return merged to maxOf(lastSeq, fresh.maxOf { it.seq })
         }
     }
 }

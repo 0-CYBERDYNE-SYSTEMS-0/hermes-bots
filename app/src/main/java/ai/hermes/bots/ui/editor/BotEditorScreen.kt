@@ -9,12 +9,14 @@ import ai.hermes.bots.ui.components.FaceAvatar
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -102,6 +105,11 @@ fun BotEditorScreen(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var keyDialogFor by remember { mutableStateOf<ProviderOption?>(null) }
+    val dirty by vm.dirty.collectAsState()
+    var confirmDiscard by remember { mutableStateOf(false) }
+
+    // A stray swipe or tap on the back arrow must not throw away an authored SOUL.md.
+    BackHandler(enabled = dirty && !ui.saving && !ui.saved) { confirmDiscard = true }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -146,7 +154,9 @@ fun BotEditorScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    IconButton(onClick = {
+                        if (dirty && !ui.saving && !ui.saved) confirmDiscard = true else onBack()
+                    }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
             )
         },
@@ -241,9 +251,11 @@ fun BotEditorScreen(
                 ) { chosen -> vm.startFrom(chosen) }
                 Column {
                     Text("Create on", style = MaterialTheme.typography.labelMedium)
-                    Row(
+                    // FlowRow so every gateway choice stays visible and thumb-sized — a
+                    // single scrolling line hides options with no affordance.
+                    FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         connections.forEach { c ->
                             FilterChip(
@@ -286,12 +298,10 @@ fun BotEditorScreen(
                 label = { Text("SOUL.md") },
                 modifier = Modifier.fillMaxWidth().height(160.dp),
             )
-            OutlinedTextField(
-                value = ui.sectionId,
-                onValueChange = { n -> vm.set { it.copy(sectionId = n) } },
-                label = { Text("Section") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
+            SectionDropdown(
+                sectionId = ui.sectionId,
+                existingSections = rosterRows.mapNotNull { it.bot.sectionId }.filter { it.isNotBlank() }.distinct().sorted(),
+                onPick = { s -> vm.set { it.copy(sectionId = s) } },
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = ui.hidden, onClick = { vm.set { it.copy(hidden = !it.hidden) } }, label = { Text("Hidden") })
@@ -311,15 +321,24 @@ fun BotEditorScreen(
                     },
                 )
             }
-            ChipGroupSection("Skills", ui.skills.map { ChipToggle(it.name, it.enabled) }) { name, on ->
-                vm.toggleSkill(name, on)
-            }
-            ChipGroupSection("Toolsets", ui.toolsets.map { ChipToggle(it.name, it.enabled) }) { name, on ->
-                vm.toggleToolset(name, on)
-            }
-            ChipGroupSection("MCP servers", ui.mcpServers.map { ChipToggle(it.name, it.enabled) }) { name, on ->
-                vm.toggleMcpServer(name, on)
-            }
+            ChipGroupSection(
+                "Skills",
+                ui.skills.map { ChipToggle(it.name, it.enabled) },
+                onToggle = { name, on -> vm.toggleSkill(name, on) },
+                onSetAll = vm::setAllSkills,
+            )
+            ChipGroupSection(
+                "Toolsets",
+                ui.toolsets.map { ChipToggle(it.name, it.enabled) },
+                onToggle = { name, on -> vm.toggleToolset(name, on) },
+                onSetAll = vm::setAllToolsets,
+            )
+            ChipGroupSection(
+                "MCP servers",
+                ui.mcpServers.map { ChipToggle(it.name, it.enabled) },
+                onToggle = { name, on -> vm.toggleMcpServer(name, on) },
+                onSetAll = vm::setAllMcpServers,
+            )
         }
     }
 
@@ -333,29 +352,138 @@ fun BotEditorScreen(
             },
         )
     }
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Discard changes?") },
+            text = { Text("Your edits to this bot haven't been saved.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDiscard = false; onBack() }) { Text("Discard") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") }
+            },
+        )
+    }
 }
 
 private data class ChipToggle(val name: String, val enabled: Boolean)
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun ChipGroupSection(title: String, rows: List<ChipToggle>, onToggle: (String, Boolean) -> Unit) {
+private fun ChipGroupSection(
+    title: String,
+    rows: List<ChipToggle>,
+    onToggle: (String, Boolean) -> Unit,
+    onSetAll: ((Boolean) -> Unit)? = null,
+) {
     if (rows.isEmpty()) return
     val onCount = rows.count { it.enabled }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Text(title, style = MaterialTheme.typography.labelMedium)
         Text(
             "$onCount of ${rows.size} on",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.weight(1f))
+        if (onSetAll != null) {
+            // Bulk strip / bulk restore — the phone-friendly way to rebuild a skill set
+            // from scratch instead of tapping every chip.
+            TextButton(
+                enabled = onCount > 0,
+                onClick = { onSetAll(false) },
+                contentPadding = PaddingValues(horizontal = 8.dp),
+            ) { Text("None") }
+            TextButton(
+                enabled = onCount < rows.size,
+                onClick = { onSetAll(true) },
+                contentPadding = PaddingValues(horizontal = 8.dp),
+            ) { Text("All") }
+        }
     }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         rows.forEach { row ->
             FilterChip(
                 selected = row.enabled,
                 onClick = { onToggle(row.name, !row.enabled) },
                 label = { Text(row.name) },
+            )
+        }
+    }
+}
+
+/** Section picker — tap, don't type. Offers every section already in use on the fleet,
+ * a "Bots (no section)" default, and a "New section…" escape hatch for genuinely new
+ * names (the only case that still needs the keyboard).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SectionDropdown(
+    sectionId: String,
+    existingSections: List<String>,
+    onPick: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var typingNew by remember { mutableStateOf(false) }
+    if (typingNew) {
+        OutlinedTextField(
+            value = sectionId,
+            onValueChange = onPick,
+            label = { Text("New section name") },
+            supportingText = { Text("Tap ✕ to pick an existing section instead") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            trailingIcon = {
+                IconButton(onClick = {
+                    typingNew = false
+                    onPick("")
+                }) { Icon(Icons.Filled.Close, contentDescription = "Pick from list instead") }
+            },
+        )
+        return
+    }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = sectionId.ifBlank { "Bots (no section)" },
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Section") },
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Bots (no section)") },
+                onClick = {
+                    onPick("")
+                    expanded = false
+                },
+            )
+            existingSections.forEach { section ->
+                DropdownMenuItem(
+                    text = { Text(section) },
+                    onClick = {
+                        onPick(section)
+                        expanded = false
+                    },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("New section…") },
+                onClick = {
+                    onPick("")
+                    typingNew = true
+                    expanded = false
+                },
             )
         }
     }
@@ -478,20 +606,21 @@ private fun ModelSection(
 
             val models = ModelCatalog.modelsFor(ui.providers, ui.provider)
             if (ui.manualEntry) {
-                // Desktop-parity escape hatch: free-text provider/model.
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Desktop-parity escape hatch: free-text provider/model, stacked full-width —
+                // two half-width columns side by side are cramped thumb territory on a phone.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = ui.provider,
                         onValueChange = onProviderText,
                         label = { Text("Provider") },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = ui.model,
                         onValueChange = onModelText,
                         label = { Text("Model") },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
                 }
@@ -515,7 +644,10 @@ private fun ModelSection(
                 val candidates = EditorModel.sameAsCandidates(rosterRows, ui.createOnConnectionId, exclude)
                 if (candidates.isNotEmpty()) {
                     Text("Copy a working setup from another bot", style = MaterialTheme.typography.labelMedium)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         candidates.forEach { (name, p, m) ->
                             FilterChip(
                                 selected = false,
@@ -884,7 +1016,10 @@ private fun AddKeyDialog(providerName: String, onDismiss: () -> Unit, onSave: (S
         onDismissRequest = onDismiss,
         title = { Text("Add key for $providerName") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(
                     value = key,
                     onValueChange = { key = it },

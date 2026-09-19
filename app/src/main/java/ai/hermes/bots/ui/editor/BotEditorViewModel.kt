@@ -73,6 +73,19 @@ object EditorModel {
     return norm(provider) != norm(pinProvider) || norm(model) != norm(pinModel)
   }
 
+  /**
+   * Everything the user can edit, flattened for the back-guard's dirty check. Volatile
+   * fields (providers list, loading flags, messages, pins-as-loaded) are deliberately
+   * excluded — only a real user edit turns the editor dirty.
+   */
+  fun formValues(st: EditorUiState): List<Any?> = listOf(
+      st.name, st.description, st.soul, st.model, st.provider, st.sectionId, st.hidden,
+      st.createOnConnectionId, st.startFrom, st.pickedAvatar?.bytes?.size ?: -1,
+      st.skills.map { it.name to it.enabled },
+      st.toolsets.map { it.name to it.enabled },
+      st.mcpServers.map { it.name to it.enabled },
+  )
+
   /** P4 dropdown order: authenticated providers first; relative order kept inside each group. */
   fun orderProviders(providers: List<ProviderOption>): List<ProviderOption> {
     val (authed, rest) = providers.partition { it.authenticated }
@@ -370,6 +383,19 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
   private var probeJob: Job? = null
   private var verifyJob: Job? = null
 
+  /** Form as last loaded/saved — a back-guard against losing edits (rotations, stray swipes). */
+  private var initialForm: List<Any?> = emptyList()
+
+  /** True once any editable field differs from the last loaded/saved form. */
+  val dirty: StateFlow<Boolean> = _ui
+      .map { EditorModel.formValues(it) != initialForm }
+      .distinctUntilChanged()
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+  private fun markClean() {
+    initialForm = EditorModel.formValues(_ui.value)
+  }
+
   init {
     load()
     // B1/R8: the model catalog loads on init, whenever the create-on connection changes,
@@ -423,10 +449,12 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
             )
           }
           evaluatePinVsProviders()
+          markClean()
           // B3: per-bot "can message other bots" state from profiles.list ui_meta.
           _ui.update { it.copy(relayCapable = fetchRelayCapable(connId, editName)) }
         } else {
           _ui.update { it.copy(loading = false) }
+          markClean()
         }
       } catch (e: Exception) {
         // Screen went away / job superseded — never surface cancellation as an error.
@@ -454,6 +482,21 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
 
   fun toggleMcpServer(name: String, enabled: Boolean) = _ui.update { st ->
     st.copy(mcpServers = st.mcpServers.map { if (it.name == name) it.copy(enabled = enabled) else it })
+  }
+
+  /** Bulk toggle for the chip groups — one tap to strip every skill (etc.) and re-enable
+   * only the wanted few instead of tapping each chip.
+   */
+  fun setAllSkills(enabled: Boolean) = _ui.update { st ->
+    st.copy(skills = st.skills.map { it.copy(enabled = enabled) })
+  }
+
+  fun setAllToolsets(enabled: Boolean) = _ui.update { st ->
+    st.copy(toolsets = st.toolsets.map { it.copy(enabled = enabled) })
+  }
+
+  fun setAllMcpServers(enabled: Boolean) = _ui.update { st ->
+    st.copy(mcpServers = st.mcpServers.map { it.copy(enabled = enabled) })
   }
 
   // --- model options (B1/R8) ---
@@ -792,6 +835,7 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
           },
       )
     }
+    markClean()
     // R13: auto-test the just-saved pin; save never blocks on it.
     if (pinPicked && pinOk) autoTest(connId, slug)
   }
@@ -861,6 +905,7 @@ class BotEditorViewModel(app: Application, private val editConnectionId: String?
           message = if (pinPicked && !pinOk) "Model was not saved — try again" else "Saved $name",
       )
     }
+    markClean()
     // R13: auto-test only when the pin actually changed — unchanged edits don't burn a turn.
     if (pinPicked && pinOk && s.pinChanged) autoTest(connId, name)
   }

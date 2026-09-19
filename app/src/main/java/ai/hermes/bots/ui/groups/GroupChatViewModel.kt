@@ -3,6 +3,7 @@ package ai.hermes.bots.ui.groups
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.GroupLogEntry
 import ai.hermes.bots.data.GroupPendingAction
+import ai.hermes.bots.data.GroupRepository
 import ai.hermes.bots.data.GroupRoom
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -37,6 +38,9 @@ class GroupChatViewModel(app: Application, private val connectionId: String, pri
 
     private var pollJob: Job? = null
 
+    /** Last room-log seq seen — sent as since_seq so polls fetch deltas, not window 0. */
+    private var lastSeq = 0L
+
     init {
         refresh()
         pollJob = viewModelScope.launch {
@@ -58,9 +62,11 @@ class GroupChatViewModel(app: Application, private val connectionId: String, pri
     }
 
     private suspend fun loadRoom() {
-        val state = graph.groups.roomState(connectionId, roomId)
-        _ui.update {
-            it.copy(loading = false, room = state.room, log = state.log, pending = state.pending, error = null)
+        val state = graph.groups.roomState(connectionId, roomId, lastSeq)
+        _ui.update { cur ->
+            val (merged, seq) = GroupRepository.mergeLog(cur.log, state.log, lastSeq)
+            lastSeq = seq
+            cur.copy(loading = false, room = state.room, log = merged, pending = state.pending, error = null)
         }
     }
 

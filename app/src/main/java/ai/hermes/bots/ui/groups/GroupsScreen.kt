@@ -3,7 +3,9 @@ package ai.hermes.bots.ui.groups
 import ai.hermes.bots.data.RosterEntry
 import ai.hermes.bots.ui.theme.Dimens
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -285,7 +287,12 @@ private fun CreateGroupDialog(
         onDismissRequest = onDismiss,
         title = { Text("New group chat") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Scrollable so every bot on the gateway is reachable, however long the
+            // roster — the dialog used to clip at one screenful with no way to scroll.
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Group name") }, singleLine = true)
                 Text("Members", style = MaterialTheme.typography.labelMedium)
                 Text("Pick 2–6 members (gateway requirement)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -306,6 +313,13 @@ private fun CreateGroupDialog(
                             ai.hermes.bots.ui.components.ConnectionChip(connectionLabel)
                         }
                     }
+                }
+                if (connectionLabel.isNotBlank()) {
+                    Text(
+                        "Hosted on $connectionLabel — members must live there. For bots from several machines in one chat, use Any chats.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },

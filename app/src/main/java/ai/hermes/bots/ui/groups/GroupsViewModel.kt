@@ -46,26 +46,40 @@ class GroupsViewModel(app: Application) : AndroidViewModel(app) {
         load()
     }
 
-    /** Probe capabilities + load rooms/roster for the primary connection (initial load and Retry). */
+    /**
+     * Probe capabilities + load rooms/roster (initial load and Retry). The room host is
+     * the primary gateway when it supports groups, else the first live gateway that
+     * does — one dead or unsupported gateway must not blank the whole feature.
+     */
     private fun load() {
         viewModelScope.launch {
             _ui.update { it.copy(loading = true, probeError = null) }
             try {
                 val conns = graph.connections.connections.first()
-                val conn = conns.firstOrNull { it.primary } ?: conns.firstOrNull()
-                    ?: throw IllegalStateException("no gateway connections")
-                val caps = graph.groups.capabilities(conn.id)
-                graph.groups.refreshRooms(conn.id)
-                _ui.update {
-                    it.copy(
-                        loading = false,
-                        caps = caps,
-                        connectionId = conn.id,
-                        connectionLabel = conn.label,
-                        rooms = graph.groups.rooms.value[conn.id].orEmpty(),
-                        roster = graph.roster.roster.value.filter { e -> e.bot.connectionId == conn.id && !e.bot.hidden },
-                    )
+                    .let { live -> live.sortedByDescending { it.primary } }
+                if (conns.isEmpty()) throw IllegalStateException("no gateway connections")
+                var lastError: Exception? = null
+                for (conn in conns) {
+                    try {
+                        val caps = graph.groups.capabilities(conn.id)
+                        if (!caps.supported) continue
+                        graph.groups.refreshRooms(conn.id)
+                        _ui.update {
+                            it.copy(
+                                loading = false,
+                                caps = caps,
+                                connectionId = conn.id,
+                                connectionLabel = conn.label,
+                                rooms = graph.groups.rooms.value[conn.id].orEmpty(),
+                                roster = graph.roster.roster.value.filter { e -> e.bot.connectionId == conn.id && !e.bot.hidden },
+                            )
+                        }
+                        return@launch
+                    } catch (e: Exception) {
+                        lastError = e
+                    }
                 }
+                throw lastError ?: IllegalStateException("no gateway hosts group chats")
             } catch (e: Exception) {
                 _ui.update { it.copy(loading = false, probeError = e.message ?: "load failed") }
             }

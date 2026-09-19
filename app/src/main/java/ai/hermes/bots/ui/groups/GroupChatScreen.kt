@@ -72,7 +72,19 @@ fun GroupChatScreen(
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(ui.log.size) { if (ui.log.isNotEmpty()) listState.animateScrollToItem(ui.log.lastIndex) }
+    // Control-plane events (turn.settled, room.activity, …) stay out of the user's
+    // round log — only user/member messages render (UI-SPEC §5.8: no raw protocol names).
+    val roundLog = remember(ui.log) {
+        ui.log.filter { it.kind == "message.user" || it.kind.startsWith("message.member") || it.kind == "message.agent" }
+    }
+    // Follow new rounds only while the reader is already near the bottom — never
+    // yank the list while they've scrolled up to read history.
+    LaunchedEffect(roundLog.size, ui.pending.size) {
+        if (roundLog.isEmpty()) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        if (lastVisible >= info.totalItemsCount - 2) listState.animateScrollToItem(info.totalItemsCount - 1)
+    }
     LaunchedEffect(ui.message) { ui.message?.let { snackbar.showSnackbar(it) } }
     LaunchedEffect(ui.disbanded) { if (ui.disbanded) onBack() }
 
@@ -123,19 +135,18 @@ fun GroupChatScreen(
                     )
                 }
             } else {
-                ui.pending.forEach { action ->
-                    PendingActionCard(
-                        action = action,
-                        memberNames = ui.room?.memberNames ?: emptyMap(),
-                        enabled = !ui.busy,
-                        onResolve = vm::resolve,
-                        onRetry = vm::retry,
-                    )
-                }
                 LazyColumn(state = listState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // Control-plane events (turn.settled, room.activity, …) stay out of the user's
-                    // round log — only user/member messages render (UI-SPEC §5.8: no raw protocol names).
-                    val roundLog = ui.log.filter { it.kind == "message.user" || it.kind.startsWith("message.member") || it.kind == "message.agent" }
+                    // Approval/stuck-round cards live INSIDE the scroll container so several
+                    // stacked cards can never push the composer (or the log) off-screen.
+                    items(ui.pending, key = { "pending:${it.taskId}" }) { action ->
+                        PendingActionCard(
+                            action = action,
+                            memberNames = ui.room?.memberNames ?: emptyMap(),
+                            enabled = !ui.busy,
+                            onResolve = vm::resolve,
+                            onRetry = vm::retry,
+                        )
+                    }
                     items(roundLog, key = { it.eventId ?: it.raw.toString() }) { entry ->
                         GroupLogItem(entry)
                     }

@@ -37,16 +37,37 @@ object CanonicalChat {
      * free-text clarify arrives with no choices, and sending a fabricated "once" as the ANSWER
      * to an open question is wrong (the desktop shows a typed input there). Empty choices render
      * a humane "reply in chat" affordance instead (ApprovalCardView / Activity Needs-you).
+     *
+     * QA 2026-09-19: tolerate the real clarify shapes the wire actually carries —
+     * - batch clarify: `questions: [{qid, question, choices, multi_select}]`
+     *   (tui_gateway/server.py `_clarify_block`) — the card shows the first entry;
+     * - plain `text`/`title` instead of `question`;
+     * - the 0.21.3+ JSON-RPC dialect: HermesGateway re-emits those requests with
+     *   `server_request: true` + request_id = srq id, and the card records it as
+     *   [ApprovalCard.serverRequestId] so answers ride a result frame.
      */
     fun parseCard(kind: String, payload: JsonObject?): ApprovalCard? {
         if (payload == null) return null
-        val requestId = (payload["request_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+        val requestId = stringField(payload, "request_id") ?: return null
+        val batch = (payload["questions"] as? JsonArray)
+            ?.firstOrNull() as? JsonObject
         val command = stringField(payload, "command")
             ?: stringField(payload, "question")
+            ?: stringField(payload, "text")
+            ?: batch?.let { stringField(it, "question") }
         val choices = stringList(payload, "choices")
             ?: stringList(payload, "answers")
+            ?: batch?.let { stringList(it, "choices") }
             ?: emptyList()
-        return ApprovalCard(requestId = requestId, kind = kind, command = command, choices = choices)
+        val serverRequest = (payload["server_request"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() == true
+        return ApprovalCard(
+            requestId = requestId,
+            kind = kind,
+            command = command,
+            choices = choices,
+            serverRequestId = if (serverRequest) requestId else null,
+            qid = batch?.let { stringField(it, "qid") },
+        )
     }
 
     private fun stringField(payload: JsonObject, key: String): String? =

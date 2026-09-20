@@ -2,6 +2,7 @@ package ai.hermes.bots.ui.chat
 
 import ai.hermes.bots.HermesBotsApp
 import ai.hermes.bots.data.AnyChatSendRetry
+import ai.hermes.bots.data.ApprovalCard
 import ai.hermes.bots.data.CanonicalChat
 import ai.hermes.bots.data.DiffText
 import ai.hermes.bots.data.ChatItem
@@ -203,7 +204,30 @@ class ChatViewModel(
         ) ?: CanonicalChat.parseCard(
             Catalog.EVENT_CLARIFY_REQUEST,
             result["pending_clarify"] as? JsonObject,
-        )
+        ) ?: run {
+            // 0.21.3+ dialect: unanswered blocking prompts come back as `open_requests`
+            // (server_requests.py snapshot) — surface the first one as a pinned card.
+            (result["open_requests"] as? JsonArray)
+                ?.asSequence()
+                ?.filterIsInstance<JsonObject>()
+                ?.firstOrNull { entry ->
+                    val method = (entry["method"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    method?.substringBeforeLast('.') in ai.hermes.bots.protocol.BLOCKING_SERVER_REQUEST_METHODS
+                }
+                ?.let { entry ->
+                    val id = (entry["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    val params = entry["params"] as? JsonObject
+                    val method = (entry["method"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    if (id != null && params != null && method != null) {
+                        CanonicalChat.parseCard(
+                            "${method.substringBeforeLast('.')}.request",
+                            JsonObject(params + mapOf("request_id" to JsonPrimitive(id), "server_request" to JsonPrimitive(true))),
+                        )
+                    } else {
+                        null
+                    }
+                }
+        }
         val running = boolField(result, "running") == true || boolField(result, "inflight") == true
         lastActivityMs = System.currentTimeMillis()
         stalledTurn = false
@@ -214,7 +238,9 @@ class ChatViewModel(
                 error = null,
                 items = ChatMessagesParser.parse(result["messages"] as? JsonArray),
                 approval = card,
-                streaming = running,
+                // A pending prompt parks the turn (server.py:1276) — never treat a resumed
+                // session with a card as still streaming, or the composer lands in steer mode.
+                streaming = running && card == null,
                 // PROTOCOL.md §5.2: resume may return todo_state? — restore the plan card
                 // so a reconnect mid-turn doesn't lose the checklist (TodoState renders
                 // nothing when the shape doesn't parse).
@@ -419,10 +445,17 @@ class ChatViewModel(
             Catalog.EVENT_SUDO_REQUEST,
             Catalog.EVENT_SECRET_REQUEST,
             -> _ui.update {
+                // QA 2026-09-19: a blocking prompt PARKS the turn server-side (server.py:1276
+                // waits on clarify.respond) — it is not a running turn. Leaving streaming=true
+                // kept the composer in steer/stop mode, so a choice-less Question card said
+                // "reply below to answer" while every typed reply steered a parked turn into
+                // the void. Drop to send mode and retire the Working strip with the turn.
                 it.copy(
                     approval = CanonicalChat.parseCard(ev.type, ev.payload),
                     approvalResolved = null,
                     approvalExpired = false,
+                    streaming = false,
+                    statusText = null,
                 )
             }
             Catalog.EVENT_SESSION_TITLE -> _ui.update { it.copy(sessionTitle = str("title")) }
@@ -435,13 +468,26 @@ class ChatViewModel(
                 )
             }
             else -> {
-                if (ev.type.endsWith(".expire")) {
-                    val rid = str("request_id")
-                    _ui.update { st ->
-                        when {
-                            st.approval?.requestId != null && st.approval?.requestId == rid ->
-                                st.copy(approval = null, approvalExpired = true, approvalResolved = null)
-                            else -> st
+                when {
+                    // 0.21.3+ dialect: timeout/interrupt/cancel of a srq request (legacy uses *.expire).
+                    ev.type == "request.cancel" -> {
+                        val rid = str("id")
+                        _ui.update { st ->
+                            when {
+                                st.approval?.serverRequestId != null && st.approval?.serverRequestId == rid ->
+                                    st.copy(approval = null, approvalExpired = true, approvalResolved = null)
+                                else -> st
+                            }
+                        }
+                    }
+                    ev.type.endsWith(".expire") -> {
+                        val rid = str("request_id")
+                        _ui.update { st ->
+                            when {
+                                st.approval?.requestId != null && st.approval?.requestId == rid ->
+                                    st.copy(approval = null, approvalExpired = true, approvalResolved = null)
+                                else -> st
+                            }
                         }
                     }
                 }
@@ -538,14 +584,19 @@ class ChatViewModel(
         val card = _ui.value.approval?.takeIf { it.kind == Catalog.EVENT_CLARIFY_REQUEST } ?: return
         if (!clarifySkipped.add(card.requestId)) return
         try {
-            gateway?.request(
-                Catalog.METHOD_CLARIFY_RESPOND,
-                buildJsonObject {
-                    put("session_id", sid)
-                    put("request_id", card.requestId)
-                    put("answer", "")
-                },
-            )
+            if (card.serverRequestId != null) {
+                // 0.21.3+ dialect: the skip is the JSON-RPC result of the srq request.
+                gateway?.respondServerRequest(card.serverRequestId, clarifyResultFrame(card, ""))
+            } else {
+                gateway?.request(
+                    Catalog.METHOD_CLARIFY_RESPOND,
+                    buildJsonObject {
+                        put("session_id", sid)
+                        put("request_id", card.requestId)
+                        put("answer", "")
+                    },
+                )
+            }
             _ui.update { st ->
                 if (st.approval?.requestId == card.requestId) st.copy(approval = null) else st
             }
@@ -554,19 +605,53 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Result frame body for a 0.21.3+ clarify server request: `{"answer"}` for a single
+     * question, `{"answers": {qid: …}}` for a batch (tui_gateway/server.py `_clarify_block`).
+     * An empty answer is the card's own Skip (desktop parity).
+     */
+    private fun clarifyResultFrame(card: ApprovalCard, answer: String) = when (card.qid) {
+        null -> buildJsonObject { put("answer", answer) }
+        else -> buildJsonObject {
+            put("answers", buildJsonObject { put(card.qid, answer) })
+        }
+    }
+
+    /**
+     * The choice-less Question card's own Skip (desktop parity: empty answer unblocks the
+     * parked turn). QA 2026-09-19: without it, a card pinned during a dropped session had
+     * no answer path and no close at all. Only fires with a live session; when the session
+     * is down the card's X covers hiding it.
+     */
+    fun skipClarify() {
+        val sid = runtimeSessionId ?: return
+        viewModelScope.launch { skipPendingClarify(sid) }
+    }
+
     fun respond(choice: String) {
         val sid = runtimeSessionId ?: return
         val card = _ui.value.approval ?: return
         viewModelScope.launch {
             try {
                 if (card.kind == Catalog.EVENT_CLARIFY_REQUEST) {
-                    gateway?.request(
-                        Catalog.METHOD_CLARIFY_RESPOND,
-                        buildJsonObject {
-                            put("session_id", sid)
-                            put("request_id", card.requestId)
-                            put("answer", choice)
-                        },
+                    if (card.serverRequestId != null) {
+                        // 0.21.3+ dialect: the answer is the JSON-RPC result of the srq request.
+                        gateway?.respondServerRequest(card.serverRequestId, clarifyResultFrame(card, choice))
+                    } else {
+                        gateway?.request(
+                            Catalog.METHOD_CLARIFY_RESPOND,
+                            buildJsonObject {
+                                put("session_id", sid)
+                                put("request_id", card.requestId)
+                                put("answer", choice)
+                            },
+                        )
+                    }
+                } else if (card.serverRequestId != null) {
+                    // Approval/sudo/secret mirror their legacy `choice` field in the result.
+                    gateway?.respondServerRequest(
+                        card.serverRequestId,
+                        buildJsonObject { put("choice", choice) },
                     )
                 } else {
                     gateway?.request(

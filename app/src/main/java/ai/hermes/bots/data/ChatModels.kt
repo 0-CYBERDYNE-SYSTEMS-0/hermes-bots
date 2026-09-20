@@ -367,6 +367,14 @@ data class ApprovalCard(
     val kind: String,
     val command: String?,
     val choices: List<String>,
+    /**
+     * The srq-… id when the card came from a hermes 0.21.3+ JSON-RPC server request —
+     * answered with a result frame via HermesGateway.respondServerRequest instead of the
+     * legacy "<method>.respond" call (PROTOCOL.md §5.5b).
+     */
+    val serverRequestId: String? = null,
+    /** Batch clarify (questions[0].qid): the answer must ride {"answers": {qid: …}}. */
+    val qid: String? = null,
 )
 
 /** An image queued to ride with the user's next message (image.attach_bytes). */

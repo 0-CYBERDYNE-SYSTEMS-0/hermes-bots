@@ -46,6 +46,20 @@ object JsonRpc {
             put("params", params)
         }.toString()
 
+    /** Result frame answering a server-initiated request (blocking prompts, hermes 0.21.3+). */
+    fun encodeResult(id: RpcId, result: JsonElement): String =
+        buildJsonObject {
+            put("jsonrpc", "2.0")
+            put(
+                "id",
+                when (id) {
+                    is RpcId.Num -> JsonPrimitive(id.value)
+                    is RpcId.Str -> JsonPrimitive(id.value)
+                },
+            )
+            put("result", result)
+        }.toString()
+
     fun decode(text: String): RpcFrame {
         val root = try {
             json.parseToJsonElement(text).jsonObject

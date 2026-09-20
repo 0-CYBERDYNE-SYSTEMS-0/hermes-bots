@@ -41,6 +41,9 @@ data class CatchUp(
 class GatewayNotReadyException(val socketState: SocketState) :
     Exception("gateway not ready: $socketState")
 
+/** hermes 0.21.3+ blocking prompts that ride JSON-RPC server requests (PROTOCOL.md §5.5b). */
+val BLOCKING_SERVER_REQUEST_METHODS = setOf("clarify", "approval", "sudo", "secret")
+
 /**
  * Typed request/response + event flow over a HermesSocket (PROTOCOL.md §4).
  * Responses are matched by id, never by order (long-running handlers may respond late).
@@ -146,8 +149,43 @@ class HermesGateway(
                     }
                 }
             }
-            is RpcServerRequest -> Unit // server-initiated request; not used by v1
+            is RpcServerRequest -> onServerRequest(frame)
         }
+    }
+
+    /**
+     * Blocking prompts on hermes 0.21.3+ arrive as JSON-RPC server requests (method
+     * "clarify"/"approval"/"sudo"/"secret", id "srq-…") instead of the legacy
+     * "<method>.request" events + "<method>.respond" methods (PROTOCOL.md §5.5b).
+     * Re-emit them in the legacy event shape the app already speaks — the server-request
+     * id rides in the payload as request_id, and answers go back via [respondServerRequest].
+     */
+    private suspend fun onServerRequest(frame: RpcServerRequest) {
+        val base = frame.method.substringBeforeLast('.')
+        if (base !in BLOCKING_SERVER_REQUEST_METHODS) return
+        val sid = (frame.params["session_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        val payload = JsonObject(
+            frame.params + mapOf(
+                "request_id" to JsonPrimitive(idString(frame.id)),
+                "server_request" to JsonPrimitive(true),
+            ),
+        )
+        _events.emit(GatewayEvent("${base}.request", sid, null, payload))
+    }
+
+    /** Answer a server-initiated blocking request with a JSON-RPC result frame (0.21.3+ dialect). */
+    suspend fun respondServerRequest(requestId: String, result: JsonObject) {
+        val st = socket.state.value
+        if (st !is SocketState.Ready) throw GatewayNotReadyException(st)
+        val sent = withContext(Dispatchers.IO) {
+            socket.send(JsonRpc.encodeResult(RpcId.Str(requestId), result))
+        }
+        if (!sent) throw GatewayNotReadyException(socket.state.value)
+    }
+
+    private fun idString(id: RpcId): String = when (id) {
+        is RpcId.Num -> id.value.toString()
+        is RpcId.Str -> id.value
     }
 
     private suspend fun observeEpoch() {

@@ -112,6 +112,39 @@ class HermesGatewayTest {
         """{"jsonrpc":"2.0","method":"event","params":{"type":"$type","session_id":"$sid","seq":$seq,"payload":{"text":"x"}}}"""
 
     @Test
+    fun `blocking server request is re-emitted as a legacy event and answered with a result frame`() {
+        val sent = ConcurrentLinkedQueue<String>()
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                RpcServer(wsRef) { text ->
+                    sent.add(text)
+                    emptyList()
+                },
+            ),
+        )
+        awaitReady()
+        val ev = runBlocking {
+            withTimeout(5_000) {
+                gateway.events.onSubscription {
+                    wsRef.get()?.send(
+                        """{"jsonrpc":"2.0","id":"srq-abc123","method":"clarify",""" +
+                            """"params":{"session_id":"s1","question":"Pick one?","choices":[]}}""",
+                    )
+                }.first()
+            }
+        }
+        assertEquals("clarify.request", ev.type)
+        assertEquals("s1", ev.sessionId)
+        assertEquals("srq-abc123", ev.payload["request_id"]!!.jsonPrimitive.content)
+        assertEquals("true", ev.payload["server_request"]!!.jsonPrimitive.content)
+
+        runBlocking { gateway.respondServerRequest("srq-abc123", buildJsonObject { put("answer", "B") }) }
+        until { sent.any { it.contains("\"result\"") && it.contains("srq-abc123") } }
+        val answer = sent.first { it.contains("srq-abc123") && it.contains("\"result\"") }
+        assertTrue(answer.contains("\"answer\":\"B\""))
+    }
+
+    @Test
     fun `request matches response by id`() {
         server.enqueue(
             MockResponse().withWebSocketUpgrade(

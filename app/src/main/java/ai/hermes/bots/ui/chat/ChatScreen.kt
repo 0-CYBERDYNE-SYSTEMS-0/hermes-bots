@@ -510,9 +510,23 @@ fun ChatScreen(
                         ui.approvalResolved,
                         ui.approvalExpired,
                         onRespond = vm::respond,
-                        // X only once the card is no longer the live question — an active
-                        // approval is the turn's blocking state, not a stuck element.
-                        onDismiss = if (ui.approval == null) ({ approvalDismissed = true }) else null,
+                        onSkip = if (
+                            canSend &&
+                            ui.approval != null &&
+                            ui.approval?.kind == Catalog.EVENT_CLARIFY_REQUEST &&
+                            ui.approval?.choices?.isEmpty() == true &&
+                            ui.approvalResolved == null &&
+                            !ui.approvalExpired
+                        ) {
+                            vm::skipClarify
+                        } else {
+                            null
+                        },
+                        // X once the card is no longer the live question — or when the
+                        // session is down and the card can't be acted on at all (QA
+                        // 2026-09-19: pinned card + "Waiting for the gateway…" left the
+                        // user with no answer field and no close).
+                        onDismiss = if (ui.approval == null || !canSend) ({ approvalDismissed = true }) else null,
                     )
                 }
             }
@@ -520,7 +534,14 @@ fun ChatScreen(
                 ChatComposer(
                     value = draft,
                     onValueChange = { draft = it },
-                    placeholder = if (ui.streaming) "Steer the running turn…" else "Message $botName",
+                    placeholder = when {
+                        ui.streaming -> "Steer the running turn…"
+                        // QA 2026-09-19: a choice-less Question parks the turn — this field
+                        // IS the answer (send unblocks the parked turn first).
+                        ui.approval?.kind == Catalog.EVENT_CLARIFY_REQUEST && ui.approval?.choices?.isEmpty() == true ->
+                            "Type your answer…"
+                        else -> "Message $botName"
+                    },
                     streaming = ui.streaming,
                     pendingImage = ui.pendingImage?.filename,
                     onAttachImage = {
@@ -978,6 +999,7 @@ private fun ApprovalCardView(
     resolved: String?,
     expired: Boolean,
     onRespond: (String) -> Unit,
+    onSkip: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
 ) {
     val kindLabel = when (card.kind) {
@@ -1041,11 +1063,22 @@ private fun ApprovalCardView(
                 card.choices.isEmpty() && resolved == null && !expired -> {
                     // Q11 (QA 2026-09-14): a free-text clarify legitimately arrives with no
                     // choices (desktop renders a typed input) — never fabricate buttons.
-                    Text(
-                        "No preset options — reply below to answer.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // QA 2026-09-19: the composer is the answer field (placeholder says so),
+                    // but when the session is down it isn't there — the Skip keeps the card
+                    // escapable in every state (desktop parity: empty answer = skip).
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "No preset options — reply below to answer.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (onSkip != null) {
+                            TextButton(
+                                onClick = onSkip,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) { Text("Skip this question") }
+                        }
+                    }
                 }
                 else -> card.choices.forEachIndexed { index, choice ->
                     ChoiceRow(

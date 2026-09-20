@@ -182,6 +182,19 @@ Server pushes `approval.request {request_id, command?, choices:["once","session"
 | `clarify.respond` | mirror of clarify.request payload (`request_id`, chosen answer) | same pattern |
 | `sudo.*`, `secret.request`→`secret.respond`, `mcp.setup.*`, etc. | same `_block` factory (`server.py:1228-1273`) | each blocking prompt has a matching `*.respond` + `*.expire {request_id}` event on timeout |
 
+**0.21.3+ dialect (verified against `tui_gateway/server_requests.py` in 0.21.3):** blocking
+prompts also arrive as JSON-RPC **server-initiated requests** — a frame with an `id`
+(`"srq-<12hex>"`) and `method` ∈ `clarify`/`approval`/`sudo`/`secret`, `params` carrying
+`session_id` + the prompt fields (`clarify`: `question`/`questions:[{qid,question,choices,…}]`,
+`choices`) — with **no** `*.respond` method and **no** `*.expire`; the answer is the JSON-RPC
+**result frame** for that id (`clarify`: `{"answer"}` or batch `{"answers":{qid:…}}`, `""` =
+skip; approval mirrors `{"choice"}`), and timeouts/interrupts arrive as
+`request.cancel {id, method, reason}`. Unanswered prompts come back from `session.resume` as
+`open_requests:[{id, method, params}]`. The app re-emits these internally as the legacy
+`<method>.request` event shape (payload + `request_id` = srq id + `server_request:true`), so
+chat/notifications speak one card model; `ApprovalCard.serverRequestId` selects the dialect
+for the answer.
+
 ### 5.6 Groups (bot group chats)
 `tui_gateway/methods_groups.py`:
 - `groups.capabilities` → `{protocol_version, driver, authority_gateway_id, room_link, features, methods, max_log_limit}` (`218-247`)

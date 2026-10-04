@@ -13,4 +13,4 @@
 - [Gateway protocol reference](../PROTOCOL.md): JSON-RPC and REST contracts used by the Android client.
 - [License](../LICENSE).
 
-CI may expose a debug APK as a GitHub Actions artifact for 7 days; this is a temporary build artifact. The repository does not document a signed, stable public APK download or release channel.
+Hermes Bots is distributed as source and built by users. CI may expose a debug APK as a GitHub Actions artifact for 7 days; this is a temporary build artifact, not a stable download channel.

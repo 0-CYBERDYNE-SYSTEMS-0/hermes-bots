@@ -18,9 +18,9 @@ Use Hermes Agent **0.21.5 or newer** for the feature set documented here. Androi
 ## First-time setup
 
 1. Install Hermes Agent on a machine that can stay available, following its [installation instructions](https://github.com/NousResearch/hermes-agent). Use the gateway version above.
-2. Install Hermes Bots on Android from the APK provided by your distributor, or build and install it using the instructions below.
+2. Build Hermes Bots from source and install it using the instructions below.
 3. Choose a connection route: configure an [HTTPS network connection](#connect-over-a-network), including the bundled Tailscale setup, or use the [USB setup](#connect-a-usb-phone-for-local-development) for local development.
-4. If adding a gateway manually, open **Gateways → +**, enter its URL, choose **Token** or **User + password**, enter the matching credential, tap **Test**, then **Save**. Star a gateway to make it primary.
+4. If adding a gateway manually, open **Gateways → +**, enter its label and URL, choose **Token** or **User + password**, and enter the matching credential. You can tap **Test** to check the connection, then tap **Save**. Star a gateway to make it primary.
 5. Open the bot roster and select a bot to start chatting.
 
 ### Connect a USB phone for local development
@@ -30,8 +30,8 @@ When Hermes Agent is bound to `127.0.0.1` on the computer, forward its port to t
 ```bash
 export HERMES_DASHBOARD_SESSION_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 printf 'Gateway token (keep it private): %s\n' "$HERMES_DASHBOARD_SESSION_TOKEN"
-hermes serve --host 127.0.0.1 --port 9119
 adb reverse tcp:9119 tcp:9119
+hermes serve --host 127.0.0.1 --port 9119
 ```
 
 Store a stable token in the service environment if the gateway should keep using it after restart. In Hermes Bots, use `http://127.0.0.1:9119` and the gateway token. This loopback route is for local development.
@@ -58,7 +58,7 @@ When entering a remote address, include `https://` explicitly. Scheme-less addre
 
 Hermes Bots connects directly to the gateways you add; it does not host your conversations or run the model. Chat content and actions performed in the app are sent to the selected gateway. The gateway executes tools and routines and may forward prompts to the model provider configured on that machine. Review the gateway operator's and model provider's data practices.
 
-If a model switch triggers a gateway warning about cost or data policy, the app asks before it retries the switch.
+If a model switch triggers a gateway warning about cost or data policy, the app asks before it retries the switch. The optional **Share my gateways** action includes saved gateway credentials; treat its exported data like a password and share it only with an intended recipient.
 
 Gateway URLs, authentication credentials, and local app preferences are stored in the app's private Android DataStore and excluded from Android backup and device transfer. Re-add gateways after reinstalling or moving to a new device. There is no Hermes Bots cloud account or hosted conversation sync.
 
@@ -84,7 +84,28 @@ Run the Android launch/navigation smoke test with an attached device or running 
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-See the [build and documentation index](docs/README.md) and the [CI workflow](.github/workflows/ci.yml). CI may expose a debug APK as a GitHub Actions artifact for 7 days; this is a temporary build artifact. The repository does not document a signed, stable public APK distribution channel.
+See the [build and documentation index](docs/README.md) and the [CI workflow](.github/workflows/ci.yml). CI may expose a debug APK as a GitHub Actions artifact for 7 days; this is a temporary build artifact. Hermes Bots is distributed as source; build and install it yourself with the commands above.
+
+## Instructions for coding agents
+
+Use this README for build, connection, and contributor steps. Read [PROTOCOL.md](PROTOCOL.md) before changing gateway behavior; it is the wire contract, so do not invent RPC names or payloads. Follow the existing Kotlin and Compose style and keep changes focused.
+
+Copy this request into your coding agent:
+
+```text
+Read README.md and PROTOCOL.md before changing this repository. Hermes Bots is an open-source Android app that I build from source. Use JDK 17 and Android SDK 35, follow existing Kotlin and Compose conventions, keep changes focused, and use PROTOCOL.md as the gateway wire contract.
+
+Build and verify changes with:
+./gradlew :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug --stacktrace
+
+If an Android device or emulator is available, run the connected launch/navigation check:
+./gradlew :app:connectedDebugAndroidTest
+
+When a device is connected, install the debug app with:
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+When an Android device or emulator and a reachable Hermes Agent gateway are available, follow the README connection instructions to connect the app. For a remote gateway, use HTTPS with a valid certificate. For USB local development, have me run the documented token setup in my own terminal; do not run or capture output from commands that generate or print the gateway token. Show me where to enter the gateway URL and auth mode, then let me enter credentials directly in the app. Do not ask me to paste credentials into this chat, commands, logs, or source files. Do not print or commit tokens, passwords, signing files, or local SDK paths. If no device or reachable gateway is available, finish the source checks and say that live connectivity was not verified. A build or UI smoke test alone does not establish gateway connectivity.
+```
 
 ## Troubleshooting
 

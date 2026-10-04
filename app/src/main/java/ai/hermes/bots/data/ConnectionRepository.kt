@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.util.UUID
 
 private val Context.connectionStore: androidx.datastore.core.DataStore<Preferences> by preferencesDataStore(name = "connections")
 
@@ -36,7 +35,7 @@ class ConnectionRepository(private val context: Context) {
     }
 
     /**
-     * Single save path for BOTH the edit dialog and fleet import (B8): normalize the base
+     * Single save path for both the edit dialog and fleet import: normalize the base
      * URL — trim, strip trailing "/", prefix http:// on scheme-less host:port.
      */
     suspend fun upsert(record: ConnectionRecord) = mutate { cur ->
@@ -64,23 +63,6 @@ class ConnectionRepository(private val context: Context) {
 
     suspend fun setPrimary(id: String) = mutate { cur ->
         cur.map { it.copy(primary = it.id == id) } to null
-    }
-
-    /** First-run convenience: one local-dev connection so a fresh install can connect immediately. */
-    suspend fun ensureSeed() = mutate { cur ->
-        if (cur.isEmpty()) {
-            listOf(
-                ConnectionRecord(
-                    id = UUID.randomUUID().toString(),
-                    label = "Local gateway",
-                    baseUrl = "http://127.0.0.1:9119",
-                    auth = GatewayAuth.TokenAuth(token = "dev-token-9119"),
-                    primary = true,
-                ),
-            ) to null
-        } else {
-            cur to null
-        }
     }
 
     private suspend fun mutate(

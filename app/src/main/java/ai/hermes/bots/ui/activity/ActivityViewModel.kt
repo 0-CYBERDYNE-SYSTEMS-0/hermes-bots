@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-/** Backs the Activity screen (UI-SPEC.md §4.6); read-only views over the graph. */
+/** Backs the Activity screen with read-only views over the graph. */
 class ActivityViewModel(app: Application) : AndroidViewModel(app) {
   private val graph = (app as HermesBotsApp).graph
 

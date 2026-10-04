@@ -47,6 +47,19 @@ class RelayLogicTest {
         assertTrue(fail["reason"]!!.jsonPrimitive.content.contains("4091"))
     }
 
+    @Test
+    fun `outbox drain params include only the supplied connections`() {
+        val params = RelayEngine.outboxDrainParams(listOf("phone", "desktop"))
+        assertEquals(
+            listOf("phone", "desktop"),
+            params["connections"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+
+        val emptyParams = RelayEngine.outboxDrainParams(emptyList())
+        assertEquals(setOf("connections"), emptyParams.keys)
+        assertTrue(emptyParams["connections"]!!.jsonArray.isEmpty())
+    }
+
     private fun agent(handle: String) = RelayEngine.RelayAgent(handle, handle, "c", "GW", handle, "")
 
     @Test

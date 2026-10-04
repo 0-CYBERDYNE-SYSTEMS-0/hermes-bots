@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.logging.Logger
@@ -103,7 +104,7 @@ class HermesGateway(
         val deferred = CompletableDeferred<RpcResponse>()
         pending[key] = deferred
         try {
-            // D2: RealWebSocket.send schedules a writer task on OkHttp's shared TaskRunner
+            // RealWebSocket.send schedules a writer task on OkHttp's shared TaskRunner
             // (global lock). Senders here run on caller contexts (ViewModels = Main), so the
             // send is confined to IO — the ANR trace showed Main's IME dispatch contending
             // with TaskRunner/TaskQueue.shutdown() on that lock.
@@ -161,8 +162,10 @@ class HermesGateway(
      * id rides in the payload as request_id, and answers go back via [respondServerRequest].
      */
     private suspend fun onServerRequest(frame: RpcServerRequest) {
-        val base = frame.method.substringBeforeLast('.')
-        if (base !in BLOCKING_SERVER_REQUEST_METHODS) return
+        if (frame.method !in BLOCKING_SERVER_REQUEST_METHODS) {
+            respondServerRequestError(frame.id, Catalog.ERR_METHOD_NOT_FOUND, "Method not found")
+            return
+        }
         val sid = (frame.params["session_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
         val payload = JsonObject(
             frame.params + mapOf(
@@ -170,7 +173,23 @@ class HermesGateway(
                 "server_request" to JsonPrimitive(true),
             ),
         )
-        _events.emit(GatewayEvent("${base}.request", sid, null, payload))
+        _events.emit(GatewayEvent("${frame.method}.request", sid, null, payload))
+    }
+
+    private suspend fun respondServerRequestError(id: RpcId, code: Int, message: String) {
+        val frame = buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", when (id) {
+                is RpcId.Num -> JsonPrimitive(id.value)
+                is RpcId.Str -> JsonPrimitive(id.value)
+            })
+            putJsonObject("error") {
+                put("code", code)
+                put("message", message)
+            }
+        }.toString()
+        val sent = withContext(Dispatchers.IO) { socket.send(frame) }
+        if (!sent) log.fine("unknown server request reply dropped because the gateway is not ready")
     }
 
     /** Answer a server-initiated blocking request with a JSON-RPC result frame (0.21.3+ dialect). */

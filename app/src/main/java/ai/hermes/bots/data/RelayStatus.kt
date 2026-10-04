@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 
-/** Per-connection relay capability (FLEET-CONNECT-SPEC B5). Unknown until first probe. */
+/** Per-connection relay capability. Unknown until the first probe. */
 enum class RelaySupport { Unknown, Supported, Unsupported }
 
 data class RelayStatus(
@@ -13,7 +13,7 @@ data class RelayStatus(
 )
 
 /**
- * Observable per-connection relay state (B5): never latches — the engine re-probes and flips
+ * Observable per-connection relay state: never latches — the engine re-probes and flips
  * Supported/Unsupported; a successful outbox drain stamps lastDrainMs. Pure holder so the
  * transitions are JVM-unit-testable; GatewayManager owns the instance and exposes `states`.
  */

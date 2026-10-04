@@ -18,16 +18,14 @@ import kotlinx.serialization.json.put
 import java.util.logging.Logger
 
 /**
- * Cross-connection A2A relay — the app IS the relay (BOTS-MODE-PARITY.md §8, verbatim timings):
+ * Cross-connection A2A relay — the app is the relay:
  * roster loop every 60 s pushes the union of OTHER connections' agents to each gateway via
  * bot_relay.roster.sync; drain loop every 30 s (+ immediate, debounced, on
- * bot_relay.outbox.pending) drains each sender's outbox — scoped to envelopes addressed to OUR
- * connections, so coexisting relay clients (desktop app on a shared install) never steal each
- * other's envelopes — delivers each envelope on the TARGET connection's socket with a >1320 s
- * budget, then posts bot_relay.reply back on the sender's socket. Gateways whose RPCs are
- * missing (-32601) are NOT latched (B5): they are marked Unsupported and re-probed on every
- * reconnect (or at the roster cadence), so a gateway that gains relay support is picked up
- * without a restart.
+ * bot_relay.outbox.pending) drains each sender's outbox scoped to this app's live connections,
+ * then delivers each envelope on the TARGET connection's socket with a >1320 s budget and posts
+ * bot_relay.reply back on the sender's socket. Gateways whose RPCs are missing (-32601) are NOT
+ * latched: they are marked Unsupported and re-probed on every reconnect (or at the roster
+ * cadence), so a gateway that gains relay support is picked up without a restart.
  */
 class RelayEngine(
     private val manager: GatewayManager,
@@ -37,6 +35,7 @@ class RelayEngine(
 
     private val loops = mutableMapOf<String, Job>()
     private var syncJob: Job? = null
+    private val drainFailuresLogged = mutableSetOf<String>()
 
     /** connectionId -> last synced agent list (for the roster loop). */
     private val agentCache = mutableMapOf<String, List<RelayAgent>>()
@@ -66,6 +65,7 @@ class RelayEngine(
                 loops.keys.filterNot { it in live }.forEach { id ->
                     loops.remove(id)?.cancel()
                     agentCache.remove(id)
+                    drainFailuresLogged.remove(id)
                 }
                 live.forEach { (id, conn) ->
                     if (loops[id] == null) loops[id] = scope.launch { relayLoop(id, conn) }
@@ -97,7 +97,7 @@ class RelayEngine(
                 e.isMethodNotFound()
             }
             if (!unsupported) break
-            // B5: no permanent latch. Wait for the next reconnect (server restart / network
+            // No permanent latch. Wait for the next reconnect (server restart / network
             // blip — the epoch bump signals it) and re-probe, or re-probe at the roster
             // cadence, whichever comes first.
             manager.markRelayUnsupported(connectionId)
@@ -160,8 +160,17 @@ class RelayEngine(
 
     private suspend fun drainLoop(connectionId: String, conn: ConnectionLive) {
         while (true) {
-            runCatching { drainOnce(connectionId, conn) }
-                .onFailure { log.warning("drain failed conn=$connectionId: ${it.message}") }
+            try {
+                drainOnce(connectionId, conn)
+                drainFailuresLogged.remove(connectionId)
+            } catch (e: Exception) {
+                // A bad-params rejection repeats on every 30 s poll. Keep logcat useful by
+                // reporting the current failure once, then allow a later success to report a
+                // new outage.
+                if (drainFailuresLogged.add(connectionId)) {
+                    log.warning("drain failed conn=$connectionId: ${e.message}")
+                }
+            }
             // 30 s cadence, but an outbox.pending push wakes us early (debounced 500 ms floor).
             withTimeoutOrNull(Catalog.RELAY_DRAIN_LOOP_MS) {
                 conn.gateway.events.first { it.type == Catalog.EVENT_BOT_RELAY_OUTBOX_PENDING }
@@ -171,19 +180,12 @@ class RelayEngine(
     }
 
     private suspend fun drainOnce(connectionId: String, conn: ConnectionLive) {
-        // Scope the claim to OUR connections: a shared install can have several relay clients
-        // (desktop app + this app) draining one outbox, and claiming envelopes addressed to a
-        // connection we can't deliver (or that another client owns) steals them from their
-        // owner. Unowned leftovers resolve via the gateway's envelope TTL ('queued_expired').
-        val params = buildJsonObject {
-            put("connections", JsonArray(manager.live.value.keys.map { JsonPrimitive(it) }))
-        }
         val result = conn.gateway.request(
             Catalog.METHOD_BOT_RELAY_OUTBOX_DRAIN,
-            params,
+            outboxDrainParams(manager.live.value.keys.toList()),
             60_000,
         )
-        // A successful drain poll proves the relay RPCs are live — stamp it for the badge (B5).
+        // A successful drain poll proves the relay RPCs are live — stamp it for the badge.
         manager.markRelayDrained(connectionId)
         val envelopes = (result["envelopes"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
         for (envelope in envelopes) {
@@ -233,6 +235,11 @@ class RelayEngine(
     }
 
     companion object {
+        /** Scope the claim to connections this client can deliver to (PROTOCOL.md §5.7). */
+        fun outboxDrainParams(connectionIds: List<String>): JsonObject = buildJsonObject {
+            put("connections", JsonArray(connectionIds.map(::JsonPrimitive)))
+        }
+
         /** Monotonic roster merge: a transiently empty fetch never erases known peers —
          * the gateway treats an absent peer as unreachable, which would silently drop
          * bot-to-bot replies until a later lucky cycle. */

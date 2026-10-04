@@ -3,6 +3,7 @@ package ai.hermes.bots.ui.routines
 import ai.hermes.bots.data.CronJob
 import ai.hermes.bots.ui.util.Humanize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +61,7 @@ fun RoutinesScreen(
     connectionId: String,
     botName: String,
     onBack: () -> Unit,
+    onOpenChat: () -> Unit,
     vm: RoutinesViewModel = viewModel(
         key = "routines:$connectionId:$botName",
         factory = viewModelFactory {
@@ -118,7 +120,7 @@ fun RoutinesScreen(
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(ui.jobs, key = { it.id }) { job ->
-                    Card(Modifier.fillMaxWidth()) {
+                    Card(Modifier.fillMaxWidth().clickable(onClick = onOpenChat)) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -161,6 +163,26 @@ fun RoutinesScreen(
                                     maxLines = 2,
                                 )
                             }
+                            val runStatus = job.lastRunStatusLabel()
+                            if (runStatus != null) {
+                                Text(
+                                    "Last run: $runStatus",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (job.lastRunFailed()) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                                job.lastRunError()?.let { error ->
+                                    Text(
+                                        error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        maxLines = 2,
+                                    )
+                                }
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 TextButton(onClick = { editing = job }) { Text("Edit") }
                                 TextButton(onClick = { vm.delete(job.id) }) {
@@ -201,6 +223,31 @@ fun RoutinesScreen(
         )
     }
 }
+
+private fun CronJob.lastRunStatusLabel(): String? {
+    val status = lastStatus?.trim()?.takeIf { it.isNotEmpty() }
+    val hasError = !lastError?.trim().isNullOrEmpty() || !lastDeliveryError?.trim().isNullOrEmpty()
+    return when {
+        status == null && !hasError -> null
+        status == null -> "failed"
+        status == "ok" -> "completed"
+        status == "delivery_failed" -> "delivery failed"
+        status == "delivery_queued" -> "delivery queued"
+        else -> status.replace('_', ' ')
+    }
+}
+
+private fun CronJob.lastRunError(): String? {
+    val deliveryFailed = lastStatus?.equals("delivery_failed", ignoreCase = true) == true
+    return if (deliveryFailed) {
+        lastDeliveryError?.trim()?.takeIf { it.isNotEmpty() } ?: lastError?.trim()?.takeIf { it.isNotEmpty() }
+    } else {
+        lastError?.trim()?.takeIf { it.isNotEmpty() } ?: lastDeliveryError?.trim()?.takeIf { it.isNotEmpty() }
+    }
+}
+
+private fun CronJob.lastRunFailed(): Boolean =
+    lastStatus?.lowercase()?.let { it != "ok" && it != "delivery_queued" } ?: lastRunError() != null
 
 @Composable
 private fun RoutineDialog(

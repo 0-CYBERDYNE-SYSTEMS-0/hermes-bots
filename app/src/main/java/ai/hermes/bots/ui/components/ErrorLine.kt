@@ -25,13 +25,12 @@ import androidx.compose.ui.unit.dp
 
 
 /**
- * The one inline error system-line (audit A28): centered pill, humane first line,
+ * The one inline error system-line: centered pill, humane first line,
  * raw detail hidden behind a "Details" tap — never raw HTTP as the first line.
- * Q4 (QA 2026-09-14): unmapped raws fall back to a generic humane line instead of
+ * Unmapped raw errors fall back to a generic humane line instead of
  * rendering exception/protocol text up front; the raw text moves behind Details.
  *
- * Incident 2026-09-16 ("nothing was dismissible"): all optional extras default to null,
- * so existing call sites are unchanged.
+ * Optional extras default to null so existing call sites need no additional arguments.
  * - [onDismiss] renders a small X that removes the line (client-side artifacts only —
  *   server history never replays them).
  * - [actionLabel]/[onAction] render one tappable action under the first line (the
@@ -72,7 +71,7 @@ fun ErrorLine(
             color = MaterialTheme.colorScheme.error,
           )
           if (onDismiss != null) {
-            // 48 dp target (fleet-pulse-ui-spec §2); the icon is the visual only.
+            // 48 dp target; the icon is visual only.
             IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
               Icon(
                 Icons.Filled.Close,

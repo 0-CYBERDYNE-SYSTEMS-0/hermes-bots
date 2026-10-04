@@ -33,14 +33,14 @@ class AppGraph(private val app: HermesBotsApp) {
     val groups = GroupRepository(gateways)
     val relay = RelayEngine(gateways, scope)
     val settings = SettingsRepository(app)
-    // Model verification (MODEL-UX-PUNCHLIST.md W3): health cache + turn-based verifier.
+                                        // Model verification: health cache + turn-based verifier.
     val modelHealth = ModelHealthStore(app)
     val modelVerifier = ModelVerifier(gateways, modelHealth)
     val provisioning = FleetProvisioningCoordinator(connections)
     val anyChat = AnyChatRepository(app, gateways, roster, scope)
 
     /**
-     * Cross-connection "Needs you" inbox (UI-SPEC.md §4.6): blocking-prompt events land
+     * Cross-connection "Needs you" inbox: blocking-prompt events land
      * here; respond rides the owning connection's gateway socket.
      */
     val inbox = ApprovalInbox(sender = ApprovalRpcSender { connectionId, method, params ->
@@ -53,7 +53,6 @@ class AppGraph(private val app: HermesBotsApp) {
     private val notifyJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
 
     fun start() {
-        scope.launch { connections.ensureSeed() }
         gateways.start()
         roster.start()
         cron.start()
@@ -74,7 +73,7 @@ class AppGraph(private val app: HermesBotsApp) {
                                         ?.takeIf { it.isString }?.content.orEmpty()
                                     if (text.isNotBlank()) {
                                         val bot = roster.roster.value.firstOrNull { it.bot.canonicalSessionId == ev.sessionId }
-                                        // R4 (MODEL-UX-PUNCHLIST.md): only roster-resolved
+                                        // Only roster-resolved
                                         // sessions notify — hidden sessions (the model
                                         // verifier's test turns, stray tool sessions) used to
                                         // land here labeled "Hermes Bots" and spammed the feed.
@@ -105,7 +104,7 @@ class AppGraph(private val app: HermesBotsApp) {
                                 // Blocking prompts (approval/clarify/sudo/secret) + expiry
                                 // (PROTOCOL.md §5.5) feed the Activity screen's Needs-you
                                 // inbox; while backgrounded they also raise a HIGH notification
-                                // with verbatim quick actions (UI-SPEC.md §4.6/§4.7).
+                                // with verbatim quick actions.
                                 when (ev.type) {
                                     Catalog.EVENT_APPROVAL_REQUEST,
                                     Catalog.EVENT_CLARIFY_REQUEST,
@@ -132,11 +131,15 @@ class AppGraph(private val app: HermesBotsApp) {
                                     Catalog.EVENT_CLARIFY_EXPIRE,
                                     Catalog.EVENT_SUDO_EXPIRE,
                                     Catalog.EVENT_SECRET_EXPIRE,
+                                    "request.cancel",
                                     -> {
                                         val requestId =
-                                            (ev.payload["request_id"] as? kotlinx.serialization.json.JsonPrimitive)
+                                            ((ev.payload["request_id"] ?: ev.payload["id"]) as? kotlinx.serialization.json.JsonPrimitive)
                                                 ?.takeIf { it.isString }?.content
-                                        if (requestId != null) inbox.onExpire(requestId)
+                                        if (requestId != null) {
+                                            inbox.onExpire(requestId)
+                                            notifier.cancelApproval(requestId)
+                                        }
                                     }
                                 }
                             }
@@ -145,7 +148,7 @@ class AppGraph(private val app: HermesBotsApp) {
                 }
             }
         }
-        // Resolving removes it everywhere (UI-SPEC.md §4.6): when a request leaves the
+        // Resolving removes it everywhere: when a request leaves the
         // inbox (answered via chat, quick action, or notification), retire its system
         // notification too.
         scope.launch {

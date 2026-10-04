@@ -18,7 +18,7 @@ class ConnectionRecordJsonTest {
 
     @Test
     fun `connection record round trip with basic auth`() {
-        val rec = ConnectionRecord("id2", "TS", "https://mac.tail.ts.net:9119", GatewayAuth.BasicAuth("u", "p"))
+        val rec = ConnectionRecord("id2", "TS", "https://gateway.example.test:9119", GatewayAuth.BasicAuth("u", "p"))
         val decoded = json.decodeFromString<ConnectionRecord>(json.encodeToString(rec))
         assertEquals(GatewayAuth.BasicAuth("u", "p"), decoded.auth)
     }

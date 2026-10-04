@@ -1,182 +1,121 @@
 #!/usr/bin/env bash
-# provision-tailnet-gateway.sh — run this ON any Mac that has hermes-agent + Tailscale
-# (or pipe it over SSH: `ssh user@mac 'bash -s' < scripts/provision-tailnet-gateway.sh`).
-#
-# It configures a remote-accessible hermes gateway (gated mode: basic auth) on 0.0.0.0:9300
-# and installs a LaunchAgent so it survives reboots. Prints the URL + credentials to add to
-# the Hermes Bots Android app (Gateways → + → "User + pass").
-#
-# Idempotent: re-running keeps the existing password (it cannot be recovered from the hash —
-# delete the `dashboard.basic_auth` block in ~/.hermes/config.yaml first to mint a new one).
-#
-# Usage:  bash provision-tailnet-gateway.sh [--port 9300] [--username user] [--qr] [--name LABEL]
-#   --qr        after setup, also print a scannable deep link that pre-fills the app's
-#               "Add gateway" dialog (hermesbots://add-gateway?...). Needs python3 `qrcode`
-#               for the ASCII QR; without it, the URI is printed + written to a file.
-#   --name      label carried in the deep link (defaults to the short hostname)
+# Start a loopback Hermes gateway and expose it to this tailnet through Tailscale HTTPS.
 set -euo pipefail
+umask 077
 
 PORT="9300"
-USERNAME="user"
 QR=0
 NAME_LABEL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) PORT="$2"; shift 2;;
-    --username) USERNAME="$2"; shift 2;;
     --qr) QR=1; shift;;
     --name) NAME_LABEL="$2"; shift 2;;
     *) echo "unknown arg: $1"; exit 1;;
   esac
 done
+if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]] || ((PORT < 1 || PORT > 65535)); then
+  echo "port must be a number from 1 to 65535"
+  exit 1
+fi
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-
-# Locate the hermes CLI + the hermes-agent repo root (for the auth-provider python modules).
 HERMES_BIN="$(command -v hermes || true)"
 [[ -z "$HERMES_BIN" && -x "$HOME/.local/bin/hermes" ]] && HERMES_BIN="$HOME/.local/bin/hermes"
 [[ -z "$HERMES_BIN" && -x "$HERMES_HOME/hermes-agent/venv/bin/hermes" ]] && HERMES_BIN="$HERMES_HOME/hermes-agent/venv/bin/hermes"
-[[ -n "$HERMES_BIN" ]] || { echo "✗ hermes CLI not found"; exit 1; }
+[[ -n "$HERMES_BIN" ]] || { echo "Hermes Agent CLI not found"; exit 1; }
 
-HERMES_REAL="$(readlink -f "$HERMES_BIN" 2>/dev/null || echo "$HERMES_BIN")"
-# venv inside the clone: <clone>/venv/bin/hermes → root is two levels up.
-AGENT_ROOT="$(dirname "$(dirname "$(dirname "$HERMES_REAL")")")"
-[[ -f "$AGENT_ROOT/plugins/dashboard_auth/basic/__init__.py" ]] || AGENT_ROOT="$HERMES_HOME/hermes-agent"
-[[ -f "$AGENT_ROOT/plugins/dashboard_auth/basic/__init__.py" ]] || { echo "✗ hermes-agent repo root not found (needed for the auth modules)"; exit 1; }
-# Prefer the venv python (auth modules need httpx etc.); the CLI may be a wrapper script.
-VENV_PY="$(dirname "$HERMES_REAL")/python"
-[[ -x "$VENV_PY" ]] || VENV_PY="$HERMES_HOME/hermes-agent/venv/bin/python"
-[[ -x "$VENV_PY" ]] || VENV_PY="$(command -v python3)"
+TAILSCALE_BIN="$(command -v tailscale || true)"
+[[ -z "$TAILSCALE_BIN" && -x /opt/homebrew/bin/tailscale ]] && TAILSCALE_BIN=/opt/homebrew/bin/tailscale
+[[ -n "$TAILSCALE_BIN" ]] || { echo "Tailscale CLI not found"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "python3 not found"; exit 1; }
 
-echo "▸ hermes:  $HERMES_BIN"
-echo "▸ agent:   $AGENT_ROOT"
-echo "▸ home:    $HERMES_HOME"
+TAILNET_DNS="$("$TAILSCALE_BIN" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))')"
+[[ -n "$TAILNET_DNS" ]] || { echo "Tailscale is not connected or has no DNS name"; exit 1; }
 
-# 1. Basic auth in config.yaml — reuse stored hash if present, else mint a password.
-CONFIG_OUT="$("$VENV_PY" - "$AGENT_ROOT" "$USERNAME" <<'PYEOF'
-import secrets, sys
-sys.path.insert(0, sys.argv[1])
-from plugins.dashboard_auth.basic import hash_password
-from hermes_cli.config import load_config, save_config
-from hermes_cli.plugins_cmd import ensure_basic_auth_plugin_enabled_in_config
+mkdir -p "$HERMES_HOME"
+TOKEN_FILE="$HERMES_HOME/dashboard-session-token"
+if [[ ! -s "$TOKEN_FILE" ]]; then
+  (umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "$TOKEN_FILE")
+fi
+chmod 600 "$TOKEN_FILE"
+SESSION_TOKEN="$(cat "$TOKEN_FILE")"
+[[ -n "$SESSION_TOKEN" ]] || { echo "Session token file is empty"; exit 1; }
 
-username = sys.argv[2]
-cfg = load_config()
-basic = cfg.setdefault("dashboard", {}).setdefault("basic_auth", {})
-if not str(basic.get("password_hash", "") or "").strip():
-    pw = secrets.token_urlsafe(12)
-    basic["username"] = username
-    basic["password_hash"] = hash_password(pw)
-    basic["password"] = ""
-    ensure_basic_auth_plugin_enabled_in_config(cfg)
-    save_config(cfg)
-    print("PASSWORD:" + pw)
-else:
-    print("PASSWORD:EXISTING")
-if not str(basic.get("secret", "") or "").strip():
-    basic["secret"] = secrets.token_urlsafe(32)
-    save_config(cfg)
-PYEOF
-)"
-PASSWORD_LINE="$(echo "$CONFIG_OUT" | grep '^PASSWORD:' | head -1)"
-[[ -n "$PASSWORD_LINE" ]] || { echo "✗ config step failed: $CONFIG_OUT"; exit 1; }
-PASSWORD="${PASSWORD_LINE#PASSWORD:}"
-
-# 2. LaunchAgent — hermes serve --host 0.0.0.0 --port $PORT, keep-alive + boot persistence.
+# A loopback bind keeps the HTTP listener off the LAN. Tailscale Serve provides HTTPS to the tailnet.
 PLIST="$HOME/Library/LaunchAgents/ai.hermes.tailnet-gateway.plist"
+LOG_FILE="$HERMES_HOME/hermes-$PORT-launchd.log"
 mkdir -p "$HOME/Library/LaunchAgents"
-cat > "$PLIST" <<PLISTEOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>ai.hermes.tailnet-gateway</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$HERMES_BIN</string>
-        <string>serve</string>
-        <string>--host</string>
-        <string>0.0.0.0</string>
-        <string>--port</string>
-        <string>$PORT</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>HERMES_DASHBOARD_SESSION_TOKEN</key>
-        <string>hermes-tailnet-$PORT</string>
-        <key>HOME</key>
-        <string>$HOME</string>
-    </dict>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/tmp/hermes-$PORT-launchd.log</string>
-    <key>StandardErrorPath</key><string>/tmp/hermes-$PORT-launchd.log</string>
-</dict>
-</plist>
-PLISTEOF
+: > "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+python3 - "$PLIST" "$HERMES_BIN" "$PORT" "$SESSION_TOKEN" "$HERMES_HOME" "$HOME" "$LOG_FILE" <<'PLISTPY'
+import os
+import plistlib
+import sys
+
+path, binary, port, token, hermes_home, home, log_file = sys.argv[1:]
+plist = {
+    "Label": "ai.hermes.tailnet-gateway",
+    "ProgramArguments": [binary, "serve", "--host", "127.0.0.1", "--port", port],
+    "EnvironmentVariables": {
+        "HERMES_DASHBOARD_SESSION_TOKEN": token,
+        "HERMES_HOME": hermes_home,
+        "HOME": home,
+    },
+    "RunAtLoad": True,
+    "KeepAlive": True,
+    "StandardOutPath": log_file,
+    "StandardErrorPath": log_file,
+}
+with open(path, "wb") as output:
+    plistlib.dump(plist, output, sort_keys=False)
+os.chmod(path, 0o600)
+PLISTPY
+
 launchctl unload "$PLIST" 2>/dev/null || true
-pkill -f "serve --host 0.0.0.0 --port $PORT" 2>/dev/null || true
+pkill -f "serve --host 127.0.0.1 --port $PORT" 2>/dev/null || true
 sleep 2
 launchctl load "$PLIST"
 sleep 8
+curl -fsS -m 8 "http://127.0.0.1:$PORT/api/status" >/dev/null || {
+  echo "Hermes gateway did not respond on loopback port $PORT"
+  exit 1
+}
 
-# 3. Verify + print the app recipe.
-TS_IP="$(/opt/homebrew/bin/tailscale ip -4 2>/dev/null | head -1 || echo '<tailnet-ip>')"
-STATUS="$(curl -s -m 8 "http://127.0.0.1:$PORT/api/status" || echo '{"auth_required":"?"}')"
+"$TAILSCALE_BIN" serve --bg "$PORT"
+APP_URL="https://$TAILNET_DNS"
 echo
-echo "════════════════════════════════════════════════════════════"
-echo " Tailnet gateway UP on port $PORT (LaunchAgent: keep-alive + boot)"
-echo " status: $(echo "$STATUS" | head -c 160)"
-echo
-echo " Add to Hermes Bots app → Gateways → + :"
-echo "   Base URL : http://$TS_IP:$PORT"
-echo "   Auth     : User + pass"
-echo "   Username : $USERNAME"
-echo "   Password : $PASSWORD"
-echo
-echo " Reachable from ANY network while this Mac runs Tailscale."
-echo "════════════════════════════════════════════════════════════"
+echo "Tailnet HTTPS gateway is ready: $APP_URL"
+echo "Auth mode: Token"
+echo "Session token: $SESSION_TOKEN"
+echo "Keep the token private. The listener is local; Tailscale Serve exposes its HTTPS endpoint to your tailnet."
 
-# 4. Optional (--qr): deep link + terminal QR so the phone can add this gateway in one tap.
-#    Additive: the non-flag path above is untouched.
 if [[ "$QR" == "1" ]]; then
-  LABEL="${NAME_LABEL:-$(hostname -s 2>/dev/null || echo "gateway-$PORT")}"
-  DEEPLINK="$("$VENV_PY" - "$TS_IP" "$PORT" "$USERNAME" "$PASSWORD" "$LABEL" <<'QREOF'
+  LABEL="${NAME_LABEL:-${TAILNET_DNS%%.*}}"
+  DEEPLINK="$(python3 - "$APP_URL" "$SESSION_TOKEN" "$LABEL" <<'QREOF'
 import sys, urllib.parse
-ip, port, user, pw, label = sys.argv[1:6]
-# quote() not urlencode(): the app decodes '+' literally (not as space), so
-# secrets containing spaces must arrive as %20.
-q = urllib.parse.urlencode(
-    {"url": f"http://{ip}:{port}", "user": user, "token": pw, "name": label},
+url, token, label = sys.argv[1:4]
+query = urllib.parse.urlencode(
+    {"url": url, "token": token, "name": label},
     quote_via=urllib.parse.quote,
 )
-print(f"hermesbots://add-gateway?{q}")
+print(f"hermesbots://add-gateway?{query}")
 QREOF
 )"
   echo
-  echo " Deep link for the Hermes Bots app (scan or copy — opens a pre-filled"
-  echo " Add-gateway dialog; sign-in fields come along):"
-  echo " ┌──────────── copy the line below ────────────┐"
-  echo " $DEEPLINK"
-  echo " └─────────────────────────────────────────────┘"
-  LINK_FILE="$HOME/hermes-gateway-deeplink.txt"
-  printf '%s\n' "$DEEPLINK" > "$LINK_FILE"
-  echo " Also written to: $LINK_FILE"
-  if "$VENV_PY" -c 'import qrcode' >/dev/null 2>&1; then
-    echo
-    "$VENV_PY" - "$DEEPLINK" <<'QREOF'
-import sys
-import qrcode
+  echo "Deep link (contains the session token; keep it private):"
+  echo "$DEEPLINK"
+  printf '%s\n' "$DEEPLINK" > "$HOME/hermes-gateway-deeplink.txt"
+  if python3 -c 'import qrcode' >/dev/null 2>&1; then
+    python3 - "$DEEPLINK" <<'QREOF'
+import sys, qrcode
 qr = qrcode.QRCode(border=1)
 qr.add_data(sys.argv[1])
 qr.make()
 qr.print_ascii(invert=True)
 QREOF
-    echo " Scan the QR above with the phone camera (or any QR scanner)."
+    echo "Scan the QR code with Hermes Bots."
   else
-    echo " Terminal QR needs the python 'qrcode' package — install once with:"
-    echo "   $VENV_PY -m pip install qrcode"
-    echo " Then re-run with --qr, or paste the deep link on the phone directly."
+    echo "Install Python package 'qrcode' to print a terminal QR code."
   fi
-  echo "════════════════════════════════════════════════════════════"
 fi

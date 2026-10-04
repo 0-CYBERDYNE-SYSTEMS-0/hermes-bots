@@ -2,6 +2,7 @@ package ai.hermes.bots.data
 
 import ai.hermes.bots.protocol.RpcError
 import ai.hermes.bots.protocol.RpcException
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,6 +16,9 @@ class AnyChatMemberSendTest {
 
     private class FakeOps(override val displayName: String = "default") : AnyChatMemberSend.Ops {
         var live = true
+        var aligned = true
+        var alignmentReason = "saved model alignment is not confirmed"
+        var adoptionResult = true
         val attempts = mutableListOf<String>()
         val submitted = mutableListOf<String>()
         val errors = mutableListOf<String>()
@@ -28,6 +32,10 @@ class AnyChatMemberSendTest {
         val submitFailures = ArrayDeque<Exception>()
 
         override fun gatewayLive(): Boolean = live
+
+        override fun alignedForSubmit(sessionId: String): Boolean = aligned
+
+        override fun alignmentBlockReason(): String = alignmentReason
 
         override suspend fun submit(sessionId: String, text: String) {
             attempts += sessionId
@@ -44,8 +52,9 @@ class AnyChatMemberSendTest {
             return row
         }
 
-        override fun sessionAdopted(sessionId: String) {
+        override suspend fun sessionAdopted(sessionId: String): Boolean {
             adopted += sessionId
+            return adoptionResult
         }
 
         override fun streamingAborted() {
@@ -160,6 +169,30 @@ class AnyChatMemberSendTest {
     }
 
     @Test
+    fun `pending model alignment blocks prompt submit`() = runTest {
+        val ops = FakeOps().apply { aligned = false }
+        val result = AnyChatMemberSend(member, ops).send("hi", "canon-1", openIfMissing = {})
+        assertFalse(result)
+        assertTrue(ops.attempts.isEmpty())
+        assertEquals(listOf(ops.alignmentReason), ops.errors)
+    }
+
+    @Test
+    fun `recovered session is not retried until alignment succeeds`() = runTest {
+        val ops = FakeOps().apply {
+            row = row(canonicalSessionId = "canon-2")
+            resumeResult = "canon-2"
+            adoptionResult = false
+            submitFailures += staleSession()
+        }
+        val result = AnyChatMemberSend(member, ops).send("hi", "canon-1", openIfMissing = {})
+        assertFalse(result)
+        assertEquals(listOf("canon-1"), ops.attempts)
+        assertEquals(listOf("canon-2"), ops.adopted)
+        assertEquals(listOf(ops.alignmentReason), ops.errors)
+    }
+
+    @Test
     fun `any submit failure earns exactly one retry then gives up with detail`() = runTest {
         val ops = FakeOps().apply {
             row = row(canonicalSessionId = "canon-1") // stale, unchanged…
@@ -181,6 +214,54 @@ class AnyChatMemberSendTest {
         }
         AnyChatMemberSend(member, ops).send("hi", "canon-1", openIfMissing = { ops.openedCount++ })
         assertEquals(1, ops.streamingAbortedCount)
+    }
+}
+
+class AnyChatPinAlignmentStateTest {
+    @Test
+    fun `adopting a session clears its predecessor pin when new session reports none`() {
+        val announcedPin = MutableStateFlow("stale-model" to "stale-provider")
+        announcedPin.setAdoptedSessionPin("" to "")
+        assertEquals("" to "", announcedPin.value)
+
+        announcedPin.setAdoptedSessionPin("current-model" to "current-provider")
+        assertEquals("current-model" to "current-provider", announcedPin.value)
+    }
+
+    @Test
+    fun `non-ready alignment states can retry recovery`() {
+        assertTrue(AnyChatPinAlignmentState.PENDING.shouldAttemptRecovery())
+        assertTrue(AnyChatPinAlignmentState.BLOCKED.shouldAttemptRecovery())
+        assertTrue(AnyChatPinAlignmentState.DEFERRED.shouldAttemptRecovery())
+        assertFalse(AnyChatPinAlignmentState.READY.shouldAttemptRecovery())
+    }
+
+    @Test
+    fun `deferred alignment releases only when resume confirms idle state`() {
+        assertEquals(
+            AnyChatPinAlignmentState.READY,
+            AnyChatPinAlignmentState.DEFERRED.afterResume(running = false, inflight = false),
+        )
+        assertEquals(
+            AnyChatPinAlignmentState.DEFERRED,
+            AnyChatPinAlignmentState.DEFERRED.afterResume(running = false, inflight = true),
+        )
+        assertEquals(
+            AnyChatPinAlignmentState.DEFERRED,
+            AnyChatPinAlignmentState.DEFERRED.afterResume(running = null, inflight = false),
+        )
+        assertEquals(
+            AnyChatPinAlignmentState.DEFERRED,
+            AnyChatPinAlignmentState.DEFERRED.afterResume(running = true, inflight = false),
+        )
+        assertEquals(
+            AnyChatPinAlignmentState.DEFERRED,
+            AnyChatPinAlignmentState.DEFERRED.afterResume(running = null, inflight = null),
+        )
+        assertEquals(
+            AnyChatPinAlignmentState.BLOCKED,
+            AnyChatPinAlignmentState.BLOCKED.afterResume(running = false, inflight = false),
+        )
     }
 }
 

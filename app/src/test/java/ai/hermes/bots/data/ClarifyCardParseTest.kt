@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** QA 2026-09-19: clarify payloads the wire actually carries — batch, text fallback, srq dialect. */
+/** Clarify payloads supported by the wire: batch, text fallback, and server-request forms. */
 class ClarifyCardParseTest {
 
     private fun parse(json: String) = CanonicalChat.parseCard(
@@ -39,6 +39,12 @@ class ClarifyCardParseTest {
     fun `plain text payload is accepted as the ask`() {
         val card = parse("""{"request_id":"r2","text":"What port?"}""")
         assertEquals("What port?", card?.command)
+    }
+
+    @Test
+    fun `batch clarify retains every question`() {
+        val card = parse("""{"request_id":"r3","questions":[{"qid":"one","question":"First?"},{"qid":"two","question":"Second?"}]}""")
+        assertEquals(listOf("one" to "First?", "two" to "Second?"), card?.questions)
     }
 
     @Test

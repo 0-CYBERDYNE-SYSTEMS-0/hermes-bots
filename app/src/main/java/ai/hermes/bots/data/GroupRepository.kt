@@ -31,7 +31,7 @@ data class GroupRoom(
     val name: String,
     val members: List<String>,
     val disbanded: Boolean,
-    // Q10 (QA 2026-09-14): profile id → display name, off the same wire members array
+    // Resolve each member's display name from the room members array.
     // (server stores display_name at create — tui_gateway/hosted_room_service.py:446).
     val memberNames: Map<String, String> = emptyMap(),
 )
@@ -50,7 +50,7 @@ data class GroupLogEntry(
  * One action waiting on the user, from `groups.state` → `driver_status.pending_actions`
  * (`tui_gateway/hosted_room_service.py:532-548`, shape `hosted_room_driver.py:392-405`).
  *
- * Q10 (QA 2026-09-14): `choices` mirrors the payload's `approval.choices` filtered to
+ * `choices` mirrors the payload's `approval.choices` filtered to
  * {once, deny} exactly like the room driver does (hosted_room_driver.py:398-399, default
  * ["once","deny"] when empty) — the server REJECTS any other value
  * (`hosted_room_service.py` approve_room_task: "room approval choice must be once or deny").
@@ -153,12 +153,12 @@ class GroupRepository(private val manager: GatewayManager) {
         return GroupRoomState(room, log, pending)
     }
 
-    suspend fun sendUserMessage(connectionId: String, roomId: String, text: String): Boolean {
-        gateway(connectionId).request(
+    suspend fun sendUserMessage(connectionId: String, roomId: String, text: String, eventId: String): Boolean {
+        val result = gateway(connectionId).request(
             Catalog.METHOD_GROUPS_SEND,
             buildJsonObject {
                 put("room_id", roomId)
-                put("event_id", UUID.randomUUID().toString())
+                put("event_id", eventId)
                 put(
                     "payload",
                     buildJsonObject {
@@ -171,7 +171,8 @@ class GroupRepository(private val manager: GatewayManager) {
             },
             60_000,
         )
-        return true
+        return (result["accepted"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull()
+            ?: throw ProtocolException("groups.send returned no accepted status")
     }
 
     suspend fun stop(connectionId: String, roomId: String): Int {
@@ -258,7 +259,7 @@ class GroupRepository(private val manager: GatewayManager) {
             val kind = str(o, "kind") ?: return null
             val taskId = str(o, "task_id") ?: return null
             val approval = o["approval"] as? JsonObject
-            // Q10: mirror the driver's own sanitize — keep only once/deny, default both.
+            // Mirror the driver's sanitize: keep only once/deny, default both.
             val wireChoices = (approval?.get("choices") as? JsonArray)
                 ?.mapNotNull { c -> (c as? JsonPrimitive)?.takeIf { it.isString }?.content }
                 ?.filter { it in setOf("once", "deny") }
@@ -277,7 +278,7 @@ class GroupRepository(private val manager: GatewayManager) {
         internal fun parseRoomPublic(connectionId: String, element: JsonElement): GroupRoom? {
             val o = element as? JsonObject ?: return null
             val roomId = str(o, "room_id") ?: str(o, "id") ?: return null
-            // Q10: collect display_name per profile off the same members array.
+        // Collect display_name per profile from the same members array.
             val rawMembers = (o["members"] as? JsonArray).orEmpty()
             val names = rawMembers
                 .filterIsInstance<JsonObject>()

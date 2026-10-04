@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -30,9 +32,11 @@ sealed interface SocketState {
 
 /**
  * One reconnecting WebSocket to a hermes gateway (PROTOCOL.md §2–§3).
- * First frame after accept MUST be gateway.ready (epoch stored on Ready). Client-driven
- * heartbeat: gateway.ping every heartbeatIntervalMs; no ack within heartbeatTimeoutMs forces
- * reconnect. Backoff doubles from backoffMinMs to backoffMaxMs. No Origin header; Host intact.
+ * First frame after accept MUST be gateway.ready (epoch stored on Ready). Register client
+ * capabilities before exposing Ready so normal API requests follow on this physical socket.
+ * Client-driven heartbeat: gateway.ping every heartbeatIntervalMs; no ack within
+ * heartbeatTimeoutMs forces reconnect. Backoff doubles from backoffMinMs to backoffMaxMs.
+ * No Origin header; Host intact.
  */
 class HermesSocket(
     private val client: OkHttpClient,
@@ -77,7 +81,7 @@ class HermesSocket(
     /**
      * Production teardown. Identical to [stop], but `ws.cancel()` runs on Dispatchers.IO:
      * cancel walks OkHttp's TaskQueue shutdown (a global lock) and must never execute on
-     * Main (QA S1 — the ANR trace showed Main's IME dispatch contending on that lock).
+     * Keep sends off Main, where OkHttp's writer lock can contend with input dispatch.
      * Suspend-context call sites MUST prefer this over [stop].
      */
     suspend fun stopAsync() {
@@ -165,6 +169,17 @@ class HermesSocket(
                 val epoch = (payload?.get("replay_epoch") as? JsonPrimitive)
                     ?.takeIf { it.isString }?.content.orEmpty()
                 firstFrameSeen = true
+                val capabilitiesSent = webSocket.send(
+                    JsonRpc.encodeRequest(
+                        RpcId.Str("client-capabilities"),
+                        Catalog.METHOD_CLIENT_CAPABILITIES,
+                        buildJsonObject { put("server_requests", true) },
+                    ),
+                )
+                if (!capabilitiesSent) {
+                    failSocket("client capabilities send failed")
+                    return
+                }
                 _state.value = SocketState.Ready(epoch)
                 return
             }

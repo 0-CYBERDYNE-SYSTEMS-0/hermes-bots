@@ -14,7 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Model verification health (MODEL-UX-PUNCHLIST.md rev 2 / R2, R10): the result of a real
+ * Model verification health: the result of a real
  * end-to-end test turn against a bot's SAVED model pin, cached per connection+provider+model
  * so the editor can badge "verified working" vs a humane failure reason.
  */
@@ -44,7 +44,7 @@ object ModelHealth {
     /**
      * Classify a `message.complete` payload (PROTOCOL.md §5.1) into a health result.
      *
-     * R2: `error_surface.code` on a completion carries the FailoverReason vocabulary
+     * `error_surface.code` on a completion carries the FailoverReason vocabulary
      * (`agent/error_surface.py:27-46,155`: auth, auth_permanent, billing,
      * billing_unverified, content_policy_blocked, provider_policy_blocked, model_not_found,
      * format_error, ssl_cert_verification, timeout, stream_drop, unknown, disk_full) plus
@@ -113,9 +113,25 @@ object ModelHealth {
         val one = raw.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "The model did not respond"
         return if (one.length > 140) one.take(137) + "…" else one
     }
+
+    /**
+     * True when [reason] is about one model (credits, rejected id, that model down).
+     * A failure of this kind must not be shown as the verdict for a different model,
+     * and must not take the selected provider out of the ready list.
+     * Key, auth, and missing-provider failures are provider-wide and return false.
+     */
+    fun isModelSpecificFailure(reason: String?): Boolean {
+        val r = reason?.lowercase().orEmpty()
+        if (r.isEmpty()) return false
+        return "credit" in r || "billing" in r ||
+            "rejected that model" in r ||
+            "model is unavailable" in r ||
+            "model refused" in r ||
+            "connection to the model dropped" in r
+    }
 }
 
-/** DataStore-backed cache keyed by [ModelHealth.keyFor]; LRU-capped (R10). */
+/** DataStore-backed cache keyed by [ModelHealth.keyFor]; LRU-capped. */
 class ModelHealthStore(private val context: Context) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -167,7 +183,7 @@ class ModelHealthStore(private val context: Context) {
         }
     }
 
-    /** Best-effort prune of keys belonging to deleted connections (R10). */
+    /** Best-effort prune of keys belonging to deleted connections. */
     suspend fun pruneExcept(keepConnectionIds: Set<String>) {
         context.modelHealthStore.edit { prefs ->
             val map = decode(prefs[keyEntries]).filterKeys { key ->

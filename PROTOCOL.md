@@ -1,10 +1,9 @@
-# Hermes Gateway Wire Protocol — Client Bible
+# Hermes Gateway Wire Protocol — Android Client Reference
 
-> The exact contract for the Android client (`ai.hermes.bots`). Every method name and param
-> key below was extracted from the hermes-agent source at `~/.hermes/hermes-agent`
-> (upstream: `https://github.com/NousResearch/hermes-agent`, MIT). Citations are
-> `path:line` relative to that repo. **Hardcode these strings. Do not invent variants.**
-> If behavior differs at runtime, re-verify against source at the cited location.
+> Wire contract for the Android client (`ai.hermes.bots`), based on the
+> [Hermes Agent gateway](https://github.com/NousResearch/hermes-agent). Source paths and line
+> references are relative to that repository. Version-specific behavior is called out where
+> relevant; check the gateway version deployed when adding or changing a method.
 
 ---
 
@@ -51,8 +50,10 @@ Close codes on failed upgrade: **4401** bad credential · **4403** host/origin d
 ### Header rules for a native client
 - **Do not send an `Origin` header** — no Origin is explicitly allowed (`web_server_chat.py:182`).
 - **Host header must be the real bound host:port** — never rewrite it.
-- A remote (non-loopback) server must have been started with `--host 0.0.0.0` and an auth
-  provider configured (`hermes_cli/main_dashboard.py:435-515`).
+- A remote server needs a reachable bind address and an auth provider
+  (`hermes_cli/main_dashboard.py:435-515`). Expose it to clients only through an HTTPS/TLS
+  endpoint; do not expose its cleartext listener directly to an ordinary LAN or the public
+  internet.
 
 ### Framing & limits
 - One JSON object per WS **text frame**; `json.dumps(..., ensure_ascii=False)` outgoing
@@ -72,6 +73,20 @@ Close codes on failed upgrade: **4401** bad credential · **4403** host/origin d
 ```
 (`ws.py:272-277`). **Store `replay_epoch`.** If it changes after a reconnect, reset all
 per-session `seq` watermarks (`tui_gateway/event_replay.py:16-20`).
+
+### Client request capability (0.21.4+)
+After `gateway.ready`, send `client.capabilities` exactly once on each physical WebSocket,
+before issuing normal API requests:
+
+```json
+{"jsonrpc":"2.0","id":"client-capabilities","method":"client.capabilities",
+ "params":{"server_requests":true}}
+```
+
+The result is `{"server_requests":[...]}` (`tui_gateway/contracts/liveness.py:29-43`,
+`methods_voice.py:442-450`). `-32601` means the gateway predates this method; ignore that
+error and keep using its legacy blocking-prompt events and response methods. The 0.21.4
+backend otherwise fails blocking prompts fast for clients that do not advertise support.
 
 ### Heartbeat (client-driven, mandatory)
 Every **15 s** send `{"jsonrpc":"2.0","id":"h1","method":"gateway.ping"}` → inline reply
@@ -127,6 +142,10 @@ for the canonical bot chats so the bot relationship survives mobile disconnects.
 | `session.interrupt` | `session_id` | Stop the running turn (`methods_session.py:1922`). |
 | `session.steer` / `session.redirect` | `session_id`, `text` | Inject text mid-turn (`methods_session.py:1975-1989`). |
 | `prompt.background`, `prompt.btw` | | Background turns (`methods_prompt.py:953,968`). v2. |
+| `slash.exec` | `session_id`, `command` (name and optional argument without the leading `/`), `profile`? | Plain output `{output?,warning?}` or a typed dispatch result (`type` plus `output` / `target` / `message` / `display` / `notice`). Runs the session slash worker and live/plugin shortcuts (`contracts/tools_commands.py`, `methods_tools.py`). |
+| `command.dispatch` | `name`, `arg`?, `session_id`?, `profile`? | Typed directive: `type` ∈ `exec`, `plugin`, `alias`, `send`, `prefill`, `skill`; fields vary by type (`contracts/tools_commands.py`). Used when `slash.exec` cannot resolve a command and as its fallback for extensions. |
+
+Android routes `/compress` and `/compact` through `session.compress` (the desktop's dedicated long-timeout path); `/new` keeps the mobile canonical-chat behavior and also compresses that same conversation rather than forking it. Compression preview flags (`--preview`, `--dry-run`, `--dryrun`, case-insensitive) use the gateway's report-only `slash.exec` route. Other slash commands use `slash.exec`; Android tries `command.dispatch` only after a definite routing error (`-32601` or the explicit `4018` “use command.dispatch” response). It must not retry after a timeout or transport failure, since the first handler may already have run. The upstream source examined for these routes is commit `59004a62356f3a4697ab0fe8ad5086d2b405e2a6` (gateway base version `0.21.5`); older or capability-limited gateways may reject the methods. A client must preserve the typed directive semantics and must not expose a skill's expanded model prompt as the user-visible invocation.
 
 **Turn event sequence** (payload builder `prompt_turn.py:622-676`):
 `message.start` → N× `message.delta {text, rendered?}` (coalesced ~33 ms batches, `ws.py:63-69`)
@@ -140,9 +159,9 @@ Interim: `message.interim {text, already_streamed}`.
 |---|---|---|
 | `session.create` | `messages`?(seed) `parent_session_id`? `cwd`? `title`? `hidden`? `close_on_disconnect`? `room_plumbing`? `follow_profile_config`? `profile`? `model`/`provider`? `fast`? `cols`? | `{"session_id","stored_session_id","message_count","messages","info":{model,provider,tools,skills,cwd,branch,project,lazy,desktop_contract,profile_name}}` (`methods_session.py:296-360`). **`session_id` = runtime id for prompt.submit; `stored_session_id` = durable key across restarts.** No DB row until first prompt. |
 | `session.list` | `limit`?(200) `include_hidden`? OR exact `title` | `{"sessions":[{id,resolved_id,root_title,title,preview,started_at,last_active,message_count,…}]}` (`methods_session.py:390-402`). Exact-title lookup resolves compression lineage to live tip (`363-387`). |
-| `session.resume` | `session_id` (stored id or key); **`profile` REQUIRED for profile-scoped sessions on server ≥0.21.1** (without it the root-home registry is searched → 4007 `session not found`; verified live 2026-09-11 — `session.resume {session_id:"<scout canonical>", profile:"scout"}` → 83 msgs, same call without `profile` → 4007); opt `cols`,`omit_messages`,`defer_history`,`eager_build` | `{"session_id","resumed","message_count","messages","info","inflight","running","session_key","started_at","status",…,"pending_approval"?,"pending_clarify"?,"queued"?,"todo_state"?}` (`787-818`, `651-667`). Use `inflight`/`pending_approval` to re-render a turn that was mid-flight when we disconnected (`server.py:2690-2726`). |
+| `session.resume` | `session_id` (stored id or key); **`profile` REQUIRED for profile-scoped sessions on server ≥0.21.1** (without it the root-home registry is searched and the session may return 4007 `session not found`); opt `cols`,`omit_messages`,`defer_history`,`eager_build` | `{"session_id","resumed","message_count","messages","info","inflight","running","session_key","started_at","status",…,"pending_approval"?,"pending_clarify"?,"queued"?,"todo_state"?}` (`787-818`, `651-667`). Use `inflight`/`pending_approval` to re-render a turn that was mid-flight when the client disconnected (`server.py:2690-2726`). |
 | `session.close` | `session_id` | `{"closed":bool}` |
-| `session.compress` | `session_id`, `focus_topic`? | `{"compressed":bool,…}` — this is what `/new` maps to inside a canonical bot chat. |
+| `session.compress` | `session_id`, `focus_topic`? | Compression result includes `status`, `compressed`, message/token counts, `summary`, `messages`, and optional host/lock fields (`contracts/sessions.py`, `methods_session.py`). Desktop uses a **660 s** timeout. In Android Bot Chat, `/new`, `/compress`, and `/compact` use this RPC; `/compress`/`/compact` pass the remaining argument as `focus_topic`. |
 | `session.title` | `session_id` (read) or + `title` (write) | `{title,session_key,pending?}` + emits `session.info` |
 | `session.delete` / `session.set_hidden` / `session.active_list` / `session.most_recent` | | roster/session hygiene (`methods_session.py:876-971`) |
 | `session.events.since` | see §3 | catch-up |
@@ -165,10 +184,28 @@ colors, groups, hidden flag, image kind — the desktop strips data-URLs before 
 | Method | Params | Result |
 |---|---|---|
 | `config.get` | `key` ∈ {`provider`,`profile`,`project`,`full`,`prompt`,`skin`,`indicator`,`personality`,`reasoning`,`fast`,`busy`,`approval_mode`,`approvals.mode`,`details_mode`,`thinking_mode`,`density`,`theme`,`statusbar`,`focus`,`mouse`,`mtime`}; opt `profile` | `{"value":…}` / `{"config":…}` / `{"home":…}` (`methods_config.py:199-240`) |
-| `config.set` | `key`,`value` | may return `confirm_required`/`confirm_message` (`methods_config_set.py:458`) |
+| `config.set` | `key`,`value`; opt `profile`; model changes also accept `session_id` and `confirm_expensive_model` | may return `confirm_required`/`confirm_message`; an accepted model change during a running turn may return `deferred:true` (`methods_config_set.py:1277-1311,1331-1426`) |
 | `model.options` | `explicit_only`?,`include_unconfigured`?,`refresh`?,`session_id`?/`profile`? | full provider/model picker inventory (`methods_complete.py:278-287`) |
 | `model.save_key` | `slug`,`api_key` | provider record + `authenticated:true` (`290-320`); `model.disconnect {slug}` |
 | `gateway.capabilities` | — | `{"per_session_exclusive_submit":bool}` — gate submit UX on it (`methods_voice.py:434-439`) |
+
+The Android editor reads Prep values from `config.get {key:"full",profile}` and only writes
+`approvals.mode`. In the upstream checkout examined for this contract
+(`59004a62356f3a4697ab0fe8ad5086d2b405e2a6`, v0.21.4 canary), `config.set` has no handlers for
+`approvals.timeout`, `clarify.timeout`, or `command_allowlist`; those values are display-only in
+the app and remain editable on the gateway host. Do not add writes for them without verifying a
+new backend contract.
+
+For model changes, `value` accepts `--provider <provider>` and `--session` flags;
+`--session` keeps the selected model scoped to the live session. `session_id` targets that
+session, and `confirm_expensive_model:true` confirms a model switch that the gateway flags for
+explicit consent. Clients must show `confirm_message` and obtain the user's acceptance before
+retrying with this flag. An accepted change can return `deferred:true` while a turn is running;
+that change applies at the next turn start and does not change the model of the active turn.
+Clients must not present a local “keep current model” choice after accepting a deferred change
+unless they also replace or clear the gateway's queued change. These fields and flags are handled
+by `methods_config_set.py:1277-1311,1331-1426` and `hermes_cli/model_switch.py:2904-2996` in the
+upstream checkout above.
 
 ### 5.5 Approvals & blocking prompts (must handle in chat)
 Server pushes `approval.request {request_id, command?, choices:["once","session","always","deny"],…}`
@@ -193,7 +230,10 @@ skip; approval mirrors `{"choice"}`), and timeouts/interrupts arrive as
 `open_requests:[{id, method, params}]`. The app re-emits these internally as the legacy
 `<method>.request` event shape (payload + `request_id` = srq id + `server_request:true`), so
 chat/notifications speak one card model; `ApprovalCard.serverRequestId` selects the dialect
-for the answer.
+for the answer. After advertising `client.capabilities {server_requests:true}`, send JSON-RPC
+result frames for the supported request methods. Reply to an unrecognized server-request
+method with standard JSON-RPC error `-32601` (`Method not found`) so the backend can fail it
+promptly instead of waiting for a timeout.
 
 ### 5.6 Groups (bot group chats)
 `tui_gateway/methods_groups.py`:
@@ -212,9 +252,8 @@ for the answer.
   an extra `"type":"message.user"` key fails with **5112 "user payload has unknown fields: type"**
   (the type is implied for user events; see `gateway/hosted_rooms.py:51`).
 - `groups.log {room_id, since_seq=0, limit≤max_log_limit}` → monotonic room-log delta
-  `{events:[{room_id,seq,event_id,kind,actor,payload,created_at,…}]}` — the room TRANSCRIPT RPC
-  (missing from earlier drafts of this doc; the client's room view is fed by this, not
-  `groups.state`). Passthrough to `gateway.hosted_rooms.read_events`
+  `{events:[{room_id,seq,event_id,kind,actor,payload,created_at,…}]}` — the room transcript RPC.
+  Passthrough to `gateway.hosted_rooms.read_events`
   (`tui_gateway/methods_groups.py:489-495`, `gateway/hosted_rooms.py:1111-1150`).
 - `groups.disband {room_id, cancel_id?}` (`398`), `groups.stop {room_id, cancel_id?}` (`431`)
 - `groups.approve {room_id, member_id, task_id, execution_generation, choice, request_id}` (`439`), `groups.retry {room_id, task_id}` (`450`)
@@ -229,14 +268,14 @@ for the answer.
 
 ### 5.7 Bot relay (cross-connection A2A — the app becomes the relay)
 `tui_gateway/methods_bot_relay.py`. Desktop reference loops: `apps/desktop/src/plugins/hermes-bots/relay.ts:29-68,247-311,316-483`.
-- `bot_relay.roster.sync {agents:[{profile,handle,connection_id,connection_label,title,description}]}` → `{count}` — push the roster of agents on *other* connections to each gateway (`39-47`). **Loop: every 60 s.** **Runtime finding (2026-09-10): write_remote_roster on our install MERGE-UPSERTS by (connection_id, profile)** — a push owns its connections' rows and preserves other connections' rows (empty push = no-op) — because this install runs several relay clients (desktop app + this app) sharing one `~/.hermes/bot_relay/roster.json`; the upstream replace semantics let each client's sync erase the others', breaking `message_agent` target resolution (see `docs/patches/hermes-agent-relay-multi-client.patch`; upstream may differ).
-- `bot_relay.outbox.drain {connections?: [connection_id,…]}` → `{envelopes:[{id,message,target_connection,target_profile}]}` — atomic claim (`50-58`). **Loop: every 30 s + immediately on event `bot_relay.outbox.pending`** (debounced). **Runtime finding (2026-09-10): the app always sends `connections` = its own connection ids** — the claim then skips envelopes addressed to other clients' connections (they resolve via the 900 s envelope TTL `'queued_expired'` instead of being stolen); omitting the param keeps upstream claim-everything behavior.
+- `bot_relay.roster.sync {agents:[{profile,handle,connection_id,connection_label,title,description}]}` → `{count}` — push the roster of agents on *other* connections to each gateway (`39-47`). **Loop: every 60 s.**
+- `bot_relay.outbox.drain {connections?: [connection_id,…]}` → `{envelopes:[{id,message,target_connection,target_profile}]}` — atomically claims eligible envelopes (`50-58`). The optional `connections` list filters claims to the named connection ids. **Loop: every 30 s + immediately on event `bot_relay.outbox.pending`** (debounced).
 - `bot_relay.deliver {profile, message}` → `{reply}` — blocking on the **target** connection's socket; budget = 120 s lock-wait + 600 s turn × 2 attempts ⇒ **client timeout must exceed ~1320 s** (`28-29`). Errors 4090/4091/4092/5092 with `data.reason`, 5093 timeout.
 - `bot_relay.reply {id, reply?, error?, reason?}` → `{ok:true}` — post back on the **sender's** socket (`146-161`).
 - Server-side spool: `~/.hermes/bot_relay/{claimed,outbox,replies,roster.json}`.
 
 ### 5.8 Assets / files / exec (supporting cast)
-- `image.attach {session_id, …}` / `image.attach_bytes` / `file.attach {session_id, data:<dataURL>}` (`methods_prompt.py:669-856`) — v1.5.
+- `image.attach {session_id, …}` / `image.attach_bytes` / `file.attach {session_id, data}` where `data` is a data URL (`methods_prompt.py:669-856`) — v1.5.
 - `image.generate {prompt, aspect_ratio?, …}` → `{available, success, image, image_data?}` (`methods_images.py:43-82`) — v2.
 - `cli.exec {argv, timeout?≤600}` → `{blocked,code,output}` (`methods_tools.py:434-447`); `shell.exec {command}` (30 s cap; dangerous blocked 4005) — power features, v1.5.
 - `voice.record {action:"start"|"stop"}` → events `voice.transcript {text}` / `voice.status` / `voice.interrupted` (`methods_voice.py:703-756`) — v2.
@@ -303,24 +342,28 @@ publisher process. **Do not use them**: no seq, no replay. `/api/ws` is strictly
 
 ## 8. Remote gateway recipe (what the connection screen must implement)
 
-1. User enters base URL (accept scheme-less `host:port`, prefix `http://`; default port 9119 —
-   `connection-config.ts:66-100`).
+1. Use an explicit `https://` URL for a remote gateway. Plain `http://` is limited to loopback
+   development (`127.0.0.1` or `localhost`) and only encrypted Tailscale HTTPS endpoints are
+   used for tailnet access. Do not infer `http://` for a scheme-less remote hostname.
 2. `GET /api/status` → parse `auth_required` (and reachability).
-3. If token mode: store token; WS URL = `ws(s)://host[:port]/api/ws?token=<urlenc>`.
+3. If token mode: store token; use `ws://` only for loopback and `wss://` for HTTPS endpoints.
 4. If gated mode: store user+pass; every connect → `POST /api/auth/ws-ticket` with Basic auth →
-   `ws(s)://…/api/ws?ticket=<ticket>` (30 s TTL, single use). Re-mint on every reconnect.
+   use `ws://` only for loopback and `wss://` for HTTPS endpoints. The ticket has a 30 s TTL
+   and is single use; re-mint it on every reconnect.
 5. "Test" button: HTTP leg (status call) + WS leg (connect, success = any frame received, e.g.
    `gateway.ready`, or socket open after 750 ms grace; 10 s connect timeout —
    `apps/desktop/electron/gateway-ws-probe.ts:41-180`).
-6. Fixed token provisioning on the server side (document in README): set
-   `HERMES_DASHBOARD_SESSION_TOKEN=<token>` in the gateway's env, run `hermes serve --host 0.0.0.0 --port 9119`.
+6. Configure a gateway token in the server environment or use the gateway's authenticated
+   login flow. Store credentials in app-private storage; never include them in URLs shared with
+   other people.
 
-### Headless serve on a remote box (README material)
-`hermes serve --host 0.0.0.0 --port 9119` (`subcommands/dashboard.py:17-59`). Non-loopback
-binds **require an auth provider** — interactive setup offers basic (username & password) or
-OAuth (`main_dashboard.py:435-515`). `--insecure` is a deprecated no-op post June-2026 hardening.
-`--profile <name>` runs a server scoped to one profile. For token mode set
-`HERMES_DASHBOARD_SESSION_TOKEN` first.
+### Remote gateway access
+Non-loopback binds **require an auth provider** — interactive setup offers basic (username &
+password) or OAuth (`main_dashboard.py:435-515`). Use remote gateways only through HTTPS with
+a valid certificate. A TLS endpoint or reverse proxy must forward both HTTP requests and
+WebSocket upgrades. Do not expose the gateway's cleartext listener directly to an ordinary
+LAN or the public internet. For Tailscale, use the node's HTTPS DNS name and an HTTPS forwarding
+endpoint; do not use a tailnet IP with `http://`.
 
 ---
 

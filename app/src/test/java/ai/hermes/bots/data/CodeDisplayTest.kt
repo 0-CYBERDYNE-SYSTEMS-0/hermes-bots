@@ -5,7 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Agent-ux P0 (spec §2–3): fence language aliases and the lightweight code tokenizer. */
+/** Fence language aliases and the lightweight code tokenizer. */
 class CodeDisplayTest {
 
     // ---------- CodeLanguages ----------

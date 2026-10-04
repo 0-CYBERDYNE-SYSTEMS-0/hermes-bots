@@ -22,6 +22,7 @@ data class GroupChatUiState(
     /** Actions waiting on the user: approvals to resolve, stuck rounds to retry. */
     val pending: List<GroupPendingAction> = emptyList(),
     val busy: Boolean = false,
+    val sendOutcome: GroupSendOutcome? = null,
     val error: String? = null,
     val message: String? = null,
     /** One-shot: the room was disbanded and the screen should navigate back. */
@@ -70,19 +71,47 @@ class GroupChatViewModel(app: Application, private val connectionId: String, pri
         }
     }
 
-    fun send(text: String) {
-        if (_ui.value.busy || text.isBlank()) return
+    fun send(text: String, eventId: String): Boolean {
+        val submittedText = text.trim()
+        if (_ui.value.busy || submittedText.isEmpty()) return false
+        _ui.update { it.copy(busy = true, error = null, sendOutcome = null) }
         viewModelScope.launch {
-            _ui.update { it.copy(busy = true) }
-            try {
-                graph.groups.sendUserMessage(connectionId, roomId, text.trim())
-                _ui.update { it.copy(busy = false) }
-                delay(700)
-                loadRoom()
+            val accepted = try {
+                graph.groups.sendUserMessage(connectionId, roomId, submittedText, eventId)
             } catch (e: Exception) {
-                _ui.update { it.copy(busy = false, error = e.message ?: "send failed") }
+                _ui.update {
+                    it.copy(
+                        busy = false,
+                        sendOutcome = GroupSendOutcome(
+                            eventId,
+                            submittedText,
+                            accepted = false,
+                            deliveryUnknown = true,
+                        ),
+                        error = e.message ?: "send failed",
+                        message = "Delivery was not confirmed. Retrying the same text is safe.",
+                    )
+                }
+                return@launch
+            }
+            _ui.update {
+                it.copy(
+                    busy = false,
+                    sendOutcome = GroupSendOutcome(eventId, submittedText, accepted),
+                    error = if (accepted) null else "Gateway did not accept the message",
+                    message = if (accepted) null else "Edit or retry the message.",
+                )
+            }
+            if (accepted) {
+                try {
+                    delay(700)
+                    loadRoom()
+                } catch (e: Exception) {
+                    _ui.update { it.copy(error = e.message ?: "refresh failed") }
+                }
             }
         }
+        return true
     }
 
     fun stop() {

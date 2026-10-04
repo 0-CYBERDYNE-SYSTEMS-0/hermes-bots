@@ -12,7 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pure section building/sorting for the Activity screen (UI-SPEC.md §4.6). */
+/** Pure section building and sorting for the Activity screen. */
 class ActivitySectionsTest {
 
   private fun pending(

@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
@@ -202,7 +203,7 @@ private fun ConnectionCard(
                         else -> MaterialTheme.colorScheme.error
                     },
                 )
-                // Subtle trust line (B5/B6): full verification after Test, otherwise the
+                // Subtle trust line: full verification after Test, otherwise the
                 // relay engine's live view of this gateway's bot-to-bot support.
                 val detail = cardDetail(state, relay, verified)
                 if (detail != null) {
@@ -284,6 +285,7 @@ private fun ConnectionEditDialog(
     var verifying by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val transportError = ai.hermes.bots.data.FleetProvisioning.transportError(baseUrl)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -298,7 +300,10 @@ private fun ConnectionEditDialog(
                     value = baseUrl,
                     onValueChange = { baseUrl = it; verifyResult = null },
                     label = { Text("Address") },
-                    supportingText = { Text("e.g. 100.x.y.z:9300 or https://name.ts.net") },
+                    isError = transportError != null,
+                    supportingText = {
+                        Text(transportError ?: "Use http://127.0.0.1 for local USB access or https:// for remote gateways.")
+                    },
                     singleLine = true,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -316,6 +321,7 @@ private fun ConnectionEditDialog(
                         value = password,
                         onValueChange = { password = it; verifyResult = null },
                         label = { Text("Password") },
+                        visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                     )
                 } else {
@@ -324,6 +330,7 @@ private fun ConnectionEditDialog(
                         onValueChange = { token = it; verifyResult = null },
                         label = { Text("Session token") },
                         supportingText = { Text("The dashboard token your gateway was started with") },
+                        visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                     )
                 }
@@ -340,7 +347,7 @@ private fun ConnectionEditDialog(
                                 verifying = false
                             }
                         },
-                        enabled = !verifying && baseUrl.isNotBlank(),
+                        enabled = !verifying && baseUrl.isNotBlank() && transportError == null,
                     ) { Text(if (verifying) "Verifying…" else "Test") }
                     verifyResult?.let { result ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -395,7 +402,7 @@ private fun ConnectionEditDialog(
                             ),
                         )
                     },
-                    enabled = baseUrl.isNotBlank() && (useBasic || token.isNotBlank()),
+                    enabled = baseUrl.isNotBlank() && transportError == null && (useBasic || token.isNotBlank()),
                 ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
@@ -420,7 +427,7 @@ private fun ConnectionEditDialog(
     }
 }
 
-/** "Verified ✓ · v0.21.0 · groups ✓ · relay ✓" (FLEET-CONNECT-SPEC B6). */
+/** "Verified ✓ · v0.21.0 · groups ✓ · relay ✓". */
 private fun verificationLine(result: FleetProbeResult): String = buildString {
     append("Verified ✓")
     result.serverVersion?.let { append(" · v").append(it) }

@@ -1,8 +1,9 @@
 package ai.hermes.bots.ui.settings
 
 import ai.hermes.bots.data.GatewayDraft
+import ai.hermes.bots.data.FleetProvisioning
 import ai.hermes.bots.protocol.GatewayAuth
-import ai.hermes.bots.protocol.GatewayProbe
+import ai.hermes.bots.protocol.FleetProbeResult
 import ai.hermes.bots.ui.theme.brandPalette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,19 +28,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
 /**
- * Pre-filled "Add/Edit gateway" dialog opened by a provisioning deep link or QR (B1a).
+ * Pre-filled "Add/Edit gateway" dialog opened by a provisioning deep link or QR.
  * Mirrors the Gateways editor fields; Save goes through ConnectionRepository.upsert, which
- * normalizes the URL (B8). When the link's address matches an existing gateway, the dialog
+ * normalizes the URL. When the link's address matches an existing gateway, the dialog
  * edits that record instead of creating a duplicate.
  */
 @Composable
 fun FleetProvisionDialog(
     draft: GatewayDraft,
-    onProbe: suspend (String, GatewayAuth) -> GatewayProbe,
+    onVerify: suspend (String, GatewayAuth) -> FleetProbeResult,
     onDismiss: () -> Unit,
     onSave: (GatewayDraft) -> Unit,
 ) {
@@ -49,8 +51,8 @@ fun FleetProvisionDialog(
     var username by remember { mutableStateOf(draft.username) }
     var password by remember { mutableStateOf(draft.password) }
     var token by remember { mutableStateOf(draft.token) }
-    var probeResult by remember { mutableStateOf<GatewayProbe?>(null) }
-    var probing by remember { mutableStateOf(false) }
+    var verifyResult by remember { mutableStateOf<FleetProbeResult?>(null) }
+    var verifying by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     AlertDialog(
@@ -63,13 +65,13 @@ fun FleetProvisionDialog(
             ) {
                 if (draft.existingId == null) {
                     Text(
-                        "Check the details, then save to connect.",
+                        "Check the address and credentials now, or save and verify later from Gateways.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     Text(
-                        "This gateway already exists — review and update it.",
+                        "This gateway already exists. Verify your changes here, or save and verify later from Gateways.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -82,53 +84,79 @@ fun FleetProvisionDialog(
                 )
                 OutlinedTextField(
                     value = baseUrl,
-                    onValueChange = { baseUrl = it; probeResult = null },
+                    onValueChange = { baseUrl = it; verifyResult = null },
                     label = { Text("Address") },
                     supportingText = { Text("e.g. 100.x.y.z:9300 or https://name.ts.net") },
+                    enabled = !verifying,
                     singleLine = true,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !useBasic, onClick = { useBasic = false }, label = { Text("Token") })
-                    FilterChip(selected = useBasic, onClick = { useBasic = true }, label = { Text("User + pass") })
+                    FilterChip(
+                        selected = !useBasic,
+                        onClick = { useBasic = false; verifyResult = null },
+                        enabled = !verifying,
+                        label = { Text("Token") },
+                    )
+                    FilterChip(
+                        selected = useBasic,
+                        onClick = { useBasic = true; verifyResult = null },
+                        enabled = !verifying,
+                        label = { Text("User + pass") },
+                    )
                 }
                 if (useBasic) {
                     OutlinedTextField(
                         value = username,
-                        onValueChange = { username = it },
+                        onValueChange = { username = it; verifyResult = null },
                         label = { Text("Username") },
+                        enabled = !verifying,
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { password = it },
+                        onValueChange = { password = it; verifyResult = null },
                         label = { Text("Password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        enabled = !verifying,
                         singleLine = true,
                     )
                 } else {
                     OutlinedTextField(
                         value = token,
-                        onValueChange = { token = it; probeResult = null },
+                        onValueChange = { token = it; verifyResult = null },
                         label = { Text("Session token") },
                         supportingText = { Text("The dashboard token your gateway was started with") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        enabled = !verifying,
                         singleLine = true,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
                         onClick = {
-                            probing = true
+                            verifying = true
                             scope.launch {
                                 val auth = if (useBasic) GatewayAuth.BasicAuth(username, password)
                                 else GatewayAuth.TokenAuth(token)
-                                probeResult = onProbe(baseUrl, auth)
-                                probing = false
+                                try {
+                                    verifyResult = onVerify(FleetProvisioning.normalizeBaseUrl(baseUrl), auth)
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {
+                                    verifyResult = FleetProbeResult(
+                                        failure = "Couldn't verify this gateway. Check the address and credentials, then retry.",
+                                    )
+                                } finally {
+                                    verifying = false
+                                }
                             }
                         },
-                        enabled = !probing && baseUrl.isNotBlank(),
-                    ) { Text(if (probing) "Testing…" else "Test") }
-                    probeResult?.let { probe ->
+                        enabled = !verifying && baseUrl.isNotBlank() &&
+                            if (useBasic) username.isNotBlank() && password.isNotBlank() else token.isNotBlank(),
+                    ) { Text(if (verifying) "Verifying…" else "Verify") }
+                    verifyResult?.let { result ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (probe.reachable) {
+                            if (result.verified) {
                                 Icon(
                                     Icons.Filled.CheckCircle,
                                     contentDescription = null,
@@ -136,14 +164,13 @@ fun FleetProvisionDialog(
                                     tint = brandPalette().success,
                                 )
                                 Text(
-                                    "Reachable · Hermes v${probe.version ?: "?"}" +
-                                        if (probe.authRequired == true) " · sign-in required" else "",
+                                    "Verified · Hermes v${result.serverVersion ?: "?"}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = brandPalette().success,
                                 )
                             } else {
                                 Text(
-                                    "Couldn't reach it — check the address.",
+                                    result.failure ?: "Couldn't verify this gateway.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error,
                                 )
@@ -167,7 +194,8 @@ fun FleetProvisionDialog(
                         ),
                     )
                 },
-                enabled = baseUrl.isNotBlank() && (useBasic || token.isNotBlank()),
+                enabled = !verifying && baseUrl.isNotBlank() &&
+                    if (useBasic) username.isNotBlank() && password.isNotBlank() else token.isNotBlank(),
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

@@ -89,7 +89,7 @@ data class AvatarImage(val mime: String, val bytes: ByteArray)
 /**
  * Union roster across connections: profiles.list every Catalog.ROSTER_POLL_MS per live
  * connection, re-polled early on `sessions.changed` (PROTOCOL.md §5.9). Unread = row
- * last_active newer than the client watermark (BOTS-MODE-PARITY.md §3); active-now =
+ * last_active newer than the client watermark; active-now =
  * last_active within 90 s or fresh worker_session.
  */
 class RosterRepository(

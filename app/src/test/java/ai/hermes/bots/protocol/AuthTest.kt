@@ -36,15 +36,15 @@ class AuthTest {
     fun `normalize adds scheme and default port`() {
         assertEquals("http://127.0.0.1:9119", Auth.normalizeBaseUrl("127.0.0.1:9119"))
         assertEquals("http://10.0.2.2:9119", Auth.normalizeBaseUrl("10.0.2.2"))
-        assertEquals("http://mac.tail1234.ts.net:9119", Auth.normalizeBaseUrl("mac.tail1234.ts.net"))
-        assertEquals("https://mac.ts.net:9119", Auth.normalizeBaseUrl("https://mac.ts.net"))
+        assertEquals("http://gateway.example.test:9119", Auth.normalizeBaseUrl("gateway.example.test"))
+        assertEquals("https://gateway.example.test:9119", Auth.normalizeBaseUrl("https://gateway.example.test"))
         assertEquals("http://10.0.2.2:9119", Auth.normalizeBaseUrl("http://10.0.2.2:9119/"))
     }
 
     @Test
     fun `ws url upgrades scheme and appends api ws path`() {
         assertEquals("ws://127.0.0.1:9119/api/ws", Auth.wsUrl("http://127.0.0.1:9119"))
-        assertEquals("wss://mac.ts.net:9119/api/ws", Auth.wsUrl("https://mac.ts.net:9119"))
+        assertEquals("wss://gateway.example.test:9119/api/ws", Auth.wsUrl("https://gateway.example.test:9119"))
     }
 
     @Test
@@ -61,6 +61,18 @@ class AuthTest {
         assertEquals(false, probe.authRequired)
         assertTrue(probe.tokenMode)
         assertEquals("0.21.0", probe.version)
+    }
+
+    @Test
+    fun `probe identifies portal-only auth without treating it as basic auth`() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"auth_required":true,"auth_providers":["nous"],"auth_flows":["cookie","native_pkce"]}""",
+            ),
+        )
+        val probe = Auth.probe(client, baseUrl())
+        assertEquals(listOf("nous"), probe.authProviders)
+        assertTrue(probe.portalSignInRequired)
     }
 
     @Test

@@ -1,7 +1,7 @@
 package ai.hermes.bots.data
 
 /**
- * Pure URL-scanning for the markdown renderer (agent-ux-p0-spec.md §1): where a link starts,
+ * Pure URL-scanning for the markdown renderer: where a link starts,
  * where it ends. The renderer's scanner decides *when* to ask (never inside code spans);
  * this object owns the boundary rules — trailing sentence punctuation isn't part of a URL,
  * a closing paren the URL never opened belongs to the sentence, balanced parens are kept.

@@ -14,8 +14,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
 /**
- * FCM-free local notifications (UI-SPEC.md §4.7): four channels — approvals (HIGH,
- * with Approve/Deny quick actions), bot replies (DEFAULT), routines (DEFAULT), system
+ * FCM-free local notifications: four channels — approvals (HIGH,
+ * with approval quick actions), bot replies (DEFAULT), routines (DEFAULT), system
  * (LOW). No sticky "connected" notification.
  */
 class BotNotifier(private val context: Context) {
@@ -84,10 +84,12 @@ class BotNotifier(private val context: Context) {
     }
 
     /**
-     * Approval prompt while the app is backgrounded (UI-SPEC.md §4.6/§4.7): renders the
-     * command/question with up to two quick actions taken VERBATIM from the payload
+     * Approval prompt while the app is backgrounded: renders the
+     * command/question with up to three quick actions taken VERBATIM from the payload
      * `choices`, each wired to ApprovalActionReceiver → approval.respond; tapping the
-     * body deep-links to the bot's chat. No choices → body-only notification.
+     * body deep-links to the bot's chat. If the platform action cap hides a choice, the
+     * body tells the user to open the chat for the complete card. No choices → body-only
+     * notification.
      */
     fun notifyApproval(pending: PendingApproval, botLabel: String) {
         if (!postAllowed()) return
@@ -100,22 +102,32 @@ class BotNotifier(private val context: Context) {
             context, pending.card.requestId.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val actionChoices = approvalActionChoices(pending.card.choices)
+        val choicesTruncated = actionChoices.size < pending.card.choices.size
         val builder = NotificationCompat.Builder(context, CHANNEL_APPROVALS)
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setContentTitle(botLabel)
-            .setContentText(pending.card.command?.take(180) ?: "Wants your approval")
+            .setContentText(
+                if (choicesTruncated) "Open for all choices"
+                else pending.card.command?.take(180) ?: "Wants your approval",
+            )
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
-        pending.card.choices.take(2).forEach { choice ->
+        actionChoices.forEach { choice ->
             val actionIntent = Intent(context, ApprovalActionReceiver::class.java).apply {
                 putExtra(EXTRA_CONNECTION_ID, pending.connectionId)
                 putExtra(EXTRA_REQUEST_ID, pending.card.requestId)
                 putExtra(EXTRA_CHOICE, choice)
                 putExtra(EXTRA_SESSION_ID, pending.sessionId)
                 putExtra(EXTRA_BOT_NAME, pending.botName)
+                putExtra(EXTRA_BOT_LABEL, botLabel)
                 putExtra(EXTRA_KIND, pending.card.kind)
+                putExtra(EXTRA_APPROVAL_COMMAND, pending.card.command)
+                putStringArrayListExtra(EXTRA_APPROVAL_CHOICES, ArrayList(pending.card.choices))
+                putExtra(EXTRA_SERVER_REQUEST_ID, pending.card.serverRequestId)
+                putExtra(EXTRA_QID, pending.card.qid)
             }
             val actionPending = PendingIntent.getBroadcast(
                 context,
@@ -137,15 +149,14 @@ class BotNotifier(private val context: Context) {
     }
 
     companion object {
-        // Legacy v1.0 channel id — kept only for the historical test contract; unused
-        // since the §4.7 channel split (deleted from the shade by ensureChannels).
+        // Retained for compatibility with an older notification channel id; unused by current UI.
         const val CHANNEL_LEGACY = "bot_messages"
         const val CHANNEL_APPROVALS = "approvals"
         const val CHANNEL_BOT_REPLIES = "bot_replies"
         const val CHANNEL_ROUTINES = "routines"
         const val CHANNEL_SYSTEM = "system"
 
-        @Deprecated("Replaced by CHANNEL_BOT_REPLIES (UI-SPEC.md §4.7)")
+        @Deprecated("Replaced by CHANNEL_BOT_REPLIES")
         const val CHANNEL_ID = CHANNEL_LEGACY
 
         const val EXTRA_CONNECTION_ID = "hermesbots.extra.CONNECTION_ID"
@@ -154,5 +165,21 @@ class BotNotifier(private val context: Context) {
         const val EXTRA_CHOICE = "hermesbots.extra.CHOICE"
         const val EXTRA_SESSION_ID = "hermesbots.extra.SESSION_ID"
         const val EXTRA_KIND = "hermesbots.extra.KIND"
+        const val EXTRA_BOT_LABEL = "hermesbots.extra.BOT_LABEL"
+        const val EXTRA_APPROVAL_COMMAND = "hermesbots.extra.APPROVAL_COMMAND"
+        const val EXTRA_APPROVAL_CHOICES = "hermesbots.extra.APPROVAL_CHOICES"
+        const val EXTRA_SERVER_REQUEST_ID = "hermesbots.extra.SERVER_REQUEST_ID"
+        const val EXTRA_QID = "hermesbots.extra.QID"
+
+        /** Android surfaces at most three notification actions in its expanded shade. */
+        const val MAX_APPROVAL_ACTIONS = 3
+
+        /** Keep the real card choices and preserve `deny` when the shade caps actions. */
+        fun approvalActionChoices(choices: List<String>): List<String> {
+            if (choices.size <= MAX_APPROVAL_ACTIONS) return choices
+            val visible = choices.take(MAX_APPROVAL_ACTIONS)
+            if ("deny" in visible || "deny" !in choices) return visible
+            return choices.take(MAX_APPROVAL_ACTIONS - 1) + "deny"
+        }
     }
 }

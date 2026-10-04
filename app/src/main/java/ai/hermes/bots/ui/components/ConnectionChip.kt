@@ -10,7 +10,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 
 /**
- * B4 same-name disambiguation: the owning connection's user-facing label as a quiet chip.
+ * When a bot name appears on multiple gateways, show its owning connection's label as a quiet chip.
  * Shown wherever a bot name that exists on more than one gateway renders (roster row, chat
  * header, member pickers, AnyChat transcript); AnyChat shows it on every member tag.
  */

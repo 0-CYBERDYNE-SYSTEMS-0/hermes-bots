@@ -1,7 +1,7 @@
 package ai.hermes.bots.ui.util
 
 /**
- * Display-only copy helpers (audits A2/A28). Pure Kotlin, no protocol/data-layer
+ * Display-only copy helpers. Pure Kotlin, no protocol/data-layer
  * coupling: raw values stay untouched in the data layers; these only shape what
  * the user reads.
  */
@@ -48,7 +48,7 @@ object Humanize {
   }
 
   /**
-   * Q8 (QA 2026-09-14): snake_case tool names → humane chip labels. Map covers the tools
+   * Map snake_case tool names to humane chip labels. Cover the tools
    * this fleet actually runs (the schema "name" fields in hermes-agent's tools modules plus
    * the injected message_agent, tools/bot_mode_dm.py:38); unknown slugs fall back to
    * space-separated Title Case. The RAW name stays in the chip's expandable detail — this
@@ -105,15 +105,15 @@ object Humanize {
   )
 
   /**
-   * Maps known gateway/session error strings to humane first lines (A28); returns
+   * Maps known gateway/session error strings to humane first lines; returns
    * null when there is no known mapping — the caller may then show the raw text.
    *
-   * R11 (MODEL-UX-PUNCHLIST.md rev 2): profile-name / duplicate / provider / session-cap
+   * Handles profile-name, duplicate, provider, and session-cap
    * mappings for the bot editor come FIRST so the generic branches below never swallow
    * them (e.g. "4064" contains no "400", but an "internal error" payload could contain
    * anything).
    *
-   * Q9, rev 2 (QA red-team 2026-09-14): the humane-banner pass-through matches ONLY the
+   * The humane-banner pass-through matches only the
    * app-authored banners below (commit 2d8c5df) — a bare startsWith("couldn't") let
    * server error strings like "couldn't reach upstream: …" bypass every mapping and
    * render raw at non-ErrorLine sites.
@@ -147,7 +147,7 @@ object Humanize {
         "The gateway took too long to answer — try again."
       "connection" in lower && ("refus" in lower || "reset" in lower || "dropped" in lower || "closed" in lower) ->
         "The gateway dropped the connection — retrying."
-      // Q3 (QA 2026-09-14): prompt-send rejections lead humane; the raw code+message stays
+      // Prompt-send rejections lead humane; the raw code+message stays
       // available behind the error's "Details" affordance. Must precede the greedy "400" match.
       "submit failed" in lower ->
         "Couldn't send that to $botName — the gateway rejected the request."
@@ -164,17 +164,17 @@ object Humanize {
     "couldn't load the conversation.",
     "couldn't start a fresh chat — try again.",
     "couldn't send that response.",
-    // Incident 2026-09-16 client-authored lines (ChatViewModel) — already humane, and the
+    // Client-authored lines (ChatViewModel) are already humane, and the
     // stall notice must show verbatim next to its Interrupt action, never as a generic error.
     "turn seems stuck",
     "steer didn't reach ",
-    // Zombie-session self-heal (live dogfood 2026-09-16, rpc 4001): the VM re-opened the
+    // Zombie-session self-heal (RPC 4001): the VM re-opened the
     // session; the line asks for an honest resend, not a generic "something went wrong".
     "chat reconnected",
   )
 
   /**
-   * Cron → human cadence for the common shapes (audit A21); unrecognized
+   * Cron → human cadence for the common shapes; unrecognized
    * expressions (and the server's "every 30m" style) pass through untouched.
    */
   fun cron(expr: String): String {

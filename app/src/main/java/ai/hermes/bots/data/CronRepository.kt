@@ -37,9 +37,12 @@ data class CronJob(
     val scheduleText: String,
     val prompt: String,
     // Server job dicts carry ISO-8601 run stamps that MAY BE ABSENT/NULL — parse
-    // defensively (UI-SPEC.md §4.6 Upcoming: never render a fake time).
+    // defensively: never render a fake time for upcoming items.
     val nextRunAtMs: Long? = null,
     val lastRunAtMs: Long? = null,
+    val lastStatus: String? = null,
+    val lastError: String? = null,
+    val lastDeliveryError: String? = null,
 )
 
 /**
@@ -193,12 +196,15 @@ class CronRepository(
                 prompt = str("prompt").orEmpty(),
                 nextRunAtMs = parseIsoMs(str("next_run_at")),
                 lastRunAtMs = parseIsoMs(str("last_run_at")),
+                lastStatus = str("last_status"),
+                lastError = str("last_error"),
+                lastDeliveryError = str("last_delivery_error"),
             )
         }
 
         /**
          * Defensive ISO-8601 → epoch ms (server stamps are tz-aware `datetime.isoformat()`).
-         * Absent/blank/unparseable → null, never a fabricated time (UI-SPEC.md §4.6).
+         * Absent, blank, or unparseable values become null rather than a fabricated time.
          */
         fun parseIsoMs(text: String?): Long? {
             val clean = text?.trim().orEmpty()

@@ -8,6 +8,7 @@ object Catalog {
     // --- JSON-RPC method names (PROTOCOL.md §5) ---
     const val METHOD_EVENT = "event"
     const val METHOD_GATEWAY_PING = "gateway.ping"
+    const val METHOD_CLIENT_CAPABILITIES = "client.capabilities"
     const val METHOD_PING = "ping"
     const val METHOD_PROMPT_SUBMIT = "prompt.submit"
     const val METHOD_PROMPT_BACKGROUND = "prompt.background"
@@ -20,6 +21,8 @@ object Catalog {
     const val METHOD_SESSION_RESUME = "session.resume"
     const val METHOD_SESSION_CLOSE = "session.close"
     const val METHOD_SESSION_COMPRESS = "session.compress"
+    const val METHOD_SLASH_EXEC = "slash.exec"
+    const val METHOD_COMMAND_DISPATCH = "command.dispatch"
     const val METHOD_SESSION_TITLE = "session.title"
     const val METHOD_SESSION_DELETE = "session.delete"
     const val METHOD_SESSION_SET_HIDDEN = "session.set_hidden"
@@ -34,6 +37,8 @@ object Catalog {
     const val METHOD_PROFILES_GET_ASSET = "profiles.get_asset"
     const val METHOD_CONFIG_GET = "config.get"
     const val METHOD_CONFIG_SET = "config.set"
+    // --- Profile config keys used by the bot editor Prep section ---
+    const val CONFIG_APPROVAL_MODE = "approvals.mode"
     const val METHOD_MODEL_OPTIONS = "model.options"
     const val METHOD_MODEL_SAVE_KEY = "model.save_key"
     const val METHOD_MODEL_DISCONNECT = "model.disconnect"
@@ -147,7 +152,7 @@ object Catalog {
     const val ERR_RELAY_2 = 4092
     const val ERR_RELAY_TIMEOUT = 5093
 
-    // --- Timings & limits (PROTOCOL.md §2/§3/§5; BOTS-MODE-PARITY.md) ---
+    // --- Timings & limits (PROTOCOL.md §2/§3/§5) ---
     const val HEARTBEAT_INTERVAL_MS = 15_000L
     const val HEARTBEAT_TIMEOUT_MS = 45_000L
     const val BACKOFF_MIN_MS = 1_000L
@@ -161,12 +166,14 @@ object Catalog {
     // Server budget is ~1320 s (120 s lock-wait + 600 s turn × 2); PROTOCOL.md §5.7 requires the
     // client timeout to EXCEED it, so keep headroom above the server's worst case.
     const val RELAY_DELIVER_TIMEOUT_MS = 1_400_000L
+    // Upstream desktop uses 660 s for the dedicated session.compress RPC.
+    const val SESSION_COMPRESS_TIMEOUT_MS = 660_000L
     const val TICKET_TTL_S = 30
     const val UI_META_MAX_BYTES = 64 * 1024
     const val MAX_AVATAR_BYTES = 2 * 1024 * 1024
     const val AVATAR_MAX_EDGE_PX = 512
 
-    // --- Bots-mode conventions (PROTOCOL.md §5.3; BOTS-MODE-PARITY.md §2) ---
+    // --- Bots-mode conventions (PROTOCOL.md §5.3) ---
     const val CANONICAL_CHAT_TITLE = "Bot Chat"
     const val UI_META_KEY = "hermes-bots"
     const val ASSET_AVATAR = "avatar"

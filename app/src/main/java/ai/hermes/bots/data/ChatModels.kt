@@ -17,32 +17,24 @@ data class ChatItem(
     val toolName: String? = null,
     val summary: String? = null,
     val durationS: Double? = null,
-    // Q12 (QA 2026-09-14): set from the tool.complete payload — see ToolResult.
+    // Derived from the tool.complete result payload by ToolResult.
     val failed: Boolean = false,
-    // Q7 follow-up (live QA 2026-09-14): flattened tool output for non-verbose sessions
-    // (the wire omits result_text there) — see ToolResult.displayText.
+    // Flattened tool output for sessions where the wire omits result_text.
     val outputText: String? = null,
-    // Agent-ux P0 (spec §4): tool.complete `inline_diff?` (PROTOCOL.md §6), previously
-    // dropped — rendered as red/green rows inside the expandable chip. See DiffText.
+    // Optional tool.complete inline_diff, rendered inside the expandable tool chip.
     val inlineDiff: String? = null,
-    // Red-team SF-3: only interim-sealed rows may be grown by a superseding final
-    // (desktop gates on existing.interim — use-message-stream/index.ts:674).
+    // Only interim-sealed rows may be grown by a superseding final.
     val interimSealed: Boolean = false,
+    val imageDataUrl: String? = null,
 )
 
 /**
- * Incident 2026-09-16 (dogfood stall): a turn whose complete event never arrives left the
- * composer in steer/stop mode and the "Working —" strip pinned forever. The watchdog watches
- * EVENT ACTIVITY, never time-since-start: server turns legitimately pause for long tool runs
- * (PROTOCOL.md §5.1 turn loop has no per-turn deadline; the 1320 s budget in §5.7 is
- * bot_relay-only). The thresholds sit well above the §3 heartbeat (15 s ping / 45 s
- * reconnect) so transport jitter can never trip them.
+ * Long-running tools can pause between gateway events, so the watchdog tracks event activity
+ * rather than time since the turn started. Its thresholds exceed the heartbeat interval to
+ * avoid treating ordinary transport jitter as a stalled turn.
  *
- * Two phases, calibrated by live dogfood 2026-09-16: a plain `sleep 120` tool run emits NO
- * gateway events for its whole duration, so a 60 s mark must NOT touch the composer. SOFT
- * only appends a dismissible "no activity" line (with an Interrupt shortcut); HARD — reached
- * at the server's own 600 s turn budget, where a silent turn is dead in practice — also
- * frees the composer (streaming=false, strip cleared).
+ * The soft phase appends a dismissible "no activity" line without changing the composer. The
+ * hard phase frees the composer and clears the working strip after the server's turn budget.
  */
 object TurnWatchdog {
 
@@ -75,9 +67,7 @@ object TurnWatchdog {
     }
 }
 
-/**
- * Incident 2026-09-16: resolved/expired approval cards stayed pinned above the composer
- * forever (until the next approval). Policy for the pinned card's lifetime:
+/** Policy for how long resolved and expired approval cards remain visible:
  * - an ACTIVE card is always visible (it is the turn's blocking question);
  * - a resolved/expired card stays only until the user dismisses it;
  * - an expired card additionally auto-dismisses after [EXPIRED_LINGER_MS] so the
@@ -108,14 +98,14 @@ object ApprovalPinPolicy {
 }
 
 /**
- * Q2 (QA 2026-09-14): pure streaming-segment state, mirroring the desktop — interim
- * assistant text is sealed as its OWN segment (hermes-agent tui_gateway/prompt_turn.py:526-533)
+ * Streaming-segment state: interim assistant text is sealed as its own segment
+ * (hermes-agent tui_gateway/prompt_turn.py:526-533)
  * instead of overwriting the streamed anchor, and message.complete replaces only the newest
  * live anchor. Streamed content never vanishes and never duplicates.
  */
 object ChatStream {
 
-  /** Seal a message.interim {text, already_streamed}. Blank text seals nothing (D4 phantom-pill gate). */
+  /** Seal a message.interim {text, already_streamed}. Blank text seals nothing. */
   fun sealInterim(
       items: List<ChatItem>,
       interim: String,
@@ -186,7 +176,7 @@ object ChatStream {
   private fun sealed(text: String, nextId: () -> String, interimSealed: Boolean = false): ChatItem =
       ChatItem(nextId(), ItemKind.ASSISTANT, text, streaming = false, interimSealed = interimSealed)
 
-  // ---------- Client-side transcript artifacts (incident 2026-09-16) ----------
+  // ---------- Client-side transcript artifacts ----------
   //
   // These lines never exist in server history, so removing them client-side is final:
   // catchUp() cannot re-add a dismissed one because lastSeq advanced past the event when
@@ -208,20 +198,18 @@ object ChatStream {
   const val STALL_NOTICE = "Turn seems stuck — you can interrupt or send a new message."
 
   /**
-   * SOFT-watchdog line (live dogfood 2026-09-16: a legit `sleep 120` trips any shorter
-   * silence mark) — observed silence, never a stuck claim; the composer stays in steer mode.
+   * Soft-watchdog line: reports observed silence without claiming the turn is stuck; the
+   * composer stays in steer mode.
    */
   const val QUIET_NOTICE = "No activity for over a minute — you can interrupt if it's stuck."
 
   /**
-   * Live dogfood 2026-09-16 (Wi-Fi blip): the gateway reaped the ws-attached session even
-   * with close_on_disconnect=false, so every send answered rpc 4001 "session not found"
-   * until the screen was torn down. After the VM self-heals (full re-open), this line asks
-   * the user to resend the one message that bounced.
+   * After the VM reopens a session that the gateway no longer recognizes, this line asks the
+   * user to resend the message that failed.
    */
   const val RECONNECT_NOTICE = "Chat reconnected — send that again."
 
-  /** Append the one-shot stall notice (ERROR kind: the shared system-line style, A28). */
+  /** Append the one-shot stall notice using the shared system-line style. */
   fun stallNotice(items: List<ChatItem>, nextId: () -> String): List<ChatItem> =
       items + ChatItem(nextId(), ItemKind.ERROR, STALL_NOTICE)
 
@@ -252,7 +240,7 @@ object ChatStream {
 }
 
 /**
- * Q12 (QA 2026-09-14): the tool.complete wire payload carries NO structured success/failure
+ * The tool.complete wire payload carries no structured success/failure
  * field (hermes-agent tui_gateway/tool_progress.py:243-267 — {tool_id, name, args,
  * duration_s?, result, summary?, result_text?, inline_diff?}); failure is only derivable from
  * the `result` payload. This mirrors the desktop's own heuristic (agent/display.py
@@ -291,10 +279,9 @@ object ToolResult {
   private val textKeys = setOf("output", "stdout", "stderr", "text", "text_summary", "content")
 
   /**
-   * Q7 follow-up (live QA 2026-09-14): non-verbose sessions never receive args_text/
-   * result_text/summary for most tools (tool_progress.py emits them only when the session
-   * is verbose), so the chip would never be expandable. Flatten the ALWAYS-present
-   * `result` payload into detail text instead. Known text keys only — unknown JSON
+   * Non-verbose sessions may omit args_text/result_text/summary for tools, so flatten the
+   * always-present `result` payload into detail text. tool_progress.py emits verbose fields
+   * only for verbose sessions. Known text keys only — unknown JSON
    * shapes stay hidden rather than dumping raw protocol into the UI. Capped: raw `result`
    * is uncapped on the wire, and the whole string lives in the ChatItem.
    */
@@ -335,8 +322,8 @@ object ToolResult {
 }
 
 /**
- * Q6/Q13 (QA 2026-09-14): rewrites server-authored history text into the live, humane
- * representations. Tolerant prefix parsing — the exact format is never assumed.
+ * Rewrites server-authored history text into readable representations. Tolerant prefix
+ * parsing avoids assuming the exact format.
  */
 object HistoryDisplay {
   private val resumedRow = Regex("^↻\\s*Resumed session\\b")
@@ -358,7 +345,7 @@ object HistoryDisplay {
     }
   }
 
-  /** "[User attached image: name]" → the live bubble form "🖼 name" (Q13 unification). */
+  /** Convert the history form "[User attached image: name]" to the live bubble form. */
   fun user(text: String): String = attachedImage.replace(text, "🖼 $1")
 }
 
@@ -375,12 +362,27 @@ data class ApprovalCard(
     val serverRequestId: String? = null,
     /** Batch clarify (questions[0].qid): the answer must ride {"answers": {qid: …}}. */
     val qid: String? = null,
+    val questions: List<Pair<String, String>> = emptyList(),
 )
 
 /** An image queued to ride with the user's next message (image.attach_bytes). */
 data class PendingImage(
     val filename: String,
     val base64: String,
+)
+
+data class PendingFile(val filename: String, val dataUrl: String)
+
+internal fun <T : Any> clearSubmittedAttachment(current: T?, submitted: T?): T? =
+    if (current === submitted) null else current
+
+data class ModelSwitchConfirmation(
+    val provider: String,
+    val model: String,
+    val message: String,
+    val switching: Boolean = false,
+    val error: String? = null,
+    val canKeepCurrent: Boolean = true,
 )
 
 data class ChatUiState(
@@ -391,19 +393,30 @@ data class ChatUiState(
     val streaming: Boolean = false,
     val sessionTitle: String? = null,
     val statusText: String? = null,
+    /** Slash command currently running on this bot's gateway. */
+    val commandRunning: String? = null,
+    /** A regular message is being attached and submitted to the gateway. */
+    val sending: Boolean = false,
+    /** Latest plain-text or compression result, shown in a bounded scroll surface. */
+    val commandFeedback: String? = null,
+    val commandFeedbackIsError: Boolean = false,
     val approvalResolved: String? = null,
     val approvalExpired: Boolean = false,
     val botModel: String? = null,
+    val botProvider: String? = null,
+    /** False while the reported live model has not been matched to the bot's saved pin. */
+    val modelReady: Boolean = true,
+    /** The gateway accepted a model switch for the next turn while this turn is still active. */
+    val modelSwitchDeferred: Boolean = false,
+    val modelSwitchConfirmation: ModelSwitchConfirmation? = null,
     val pendingImage: PendingImage? = null,
-    // Agent-ux P0 (spec §5): the live plan checklist. Replaced by each todo.updated event,
-    // seeded from session.resume's todo_state?; persists across turns until replaced.
+    val pendingFile: PendingFile? = null,
+    val runLines: List<String> = emptyList(),
+    // Plan checklist, replaced by each todo.updated event or restored from session.resume.
     val todo: List<TodoItem> = emptyList(),
 )
 
-/**
- * B4 same-name disambiguation: bot names that exist on more than one connection across the
- * union roster — wherever such a name renders, show the owning connection's label.
- */
+/** Bot names shared by multiple gateways display their owning connection's label. */
 object BotNameCollisions {
     fun compute(rows: List<ai.hermes.bots.data.BotRow>): Set<String> =
         rows.groupBy { it.name }
@@ -422,7 +435,7 @@ object ChatMessagesParser {
         val role = (m["role"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
         return when (role) {
             "user" -> ChatItem("h-$index", ItemKind.USER, HistoryDisplay.user(messageText(m)))
-            "assistant" -> ChatItem("h-$index", ItemKind.ASSISTANT, HistoryDisplay.assistant(messageText(m)))
+            "assistant" -> ChatItem("h-$index", ItemKind.ASSISTANT, HistoryDisplay.assistant(messageText(m)), imageDataUrl = imageData(m))
             "tool" -> ChatItem(
                 id = "h-$index",
                 kind = ItemKind.TOOL,
@@ -436,6 +449,15 @@ object ChatMessagesParser {
 
     private fun messageText(m: JsonObject): String =
         (m["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: ""
+
+    private fun imageData(m: JsonObject): String? {
+        val blocks = m["content"] as? JsonArray ?: return null
+        return blocks.mapNotNull { it as? JsonObject }.firstNotNullOfOrNull { block ->
+            val url = (block["data"] as? JsonPrimitive)?.content
+                ?: ((block["image_url"] as? JsonObject)?.get("url") as? JsonPrimitive)?.content
+            url?.takeIf { it.startsWith("data:image/") }
+        }
+    }
 
     private fun stringField(m: JsonObject, key: String): String? =
         (m[key] as? JsonPrimitive)?.takeIf { it.isString }?.content

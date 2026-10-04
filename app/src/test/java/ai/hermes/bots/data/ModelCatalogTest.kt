@@ -8,7 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pure parsing/matching rules for `model.options` (MODEL-UX-PUNCHLIST.md rev 2 / P1). */
+/** Pure parsing/matching rules for `model.options`. */
 class ModelCatalogTest {
 
     private val json = Json { ignoreUnknownKeys = true }

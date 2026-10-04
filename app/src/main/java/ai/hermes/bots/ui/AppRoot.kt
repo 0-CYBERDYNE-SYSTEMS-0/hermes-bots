@@ -81,7 +81,7 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
 
-/** One-shot provisioning deep link delivered from MainActivity (B1a). */
+/** One-shot provisioning deep link delivered from MainActivity. */
 data class DeepLinkLaunch(val uri: String, val seq: Long)
 
 /** One-shot notification-tap chat target delivered from MainActivity (SV-15). */
@@ -99,7 +99,7 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null, pendingChat: PendingChatLaunch? = 
     val pulseBadgeCount = pendingApprovals.count { !it.expired }
     var provisionDraft by remember { mutableStateOf<GatewayDraft?>(null) }
 
-    // Deep link → pre-filled add/edit gateway dialog (FLEET-CONNECT-SPEC B1a).
+    // Deep link → pre-filled add/edit gateway dialog.
     LaunchedEffect(deepLink) {
         val link = deepLink ?: return@LaunchedEffect
         provisionDraft = app.graph.provisioning.fromDeepLink(link.uri)
@@ -115,8 +115,8 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null, pendingChat: PendingChatLaunch? = 
     provisionDraft?.let { draft ->
         FleetProvisionDialog(
             draft = draft,
-            onProbe = { url, auth ->
-                app.graph.gateways.probe(
+            onVerify = { url, auth ->
+                app.graph.gateways.verifyFleet(
                     ConnectionRecord(
                         id = "probe",
                         label = "",
@@ -228,7 +228,7 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null, pendingChat: PendingChatLaunch? = 
                 onOpenGroupChats = { nav.navigate("groups") },
             )
         }
-        // Activity console (UI-SPEC.md §4.6): the roster bell lands here; the older
+        // Activity console: the roster bell lands here; the older
         // "notifications" route stays as the full history list (§4.6 Recent → History).
         composable("activity") {
             ActivityScreen(
@@ -302,6 +302,11 @@ fun AppRoot(deepLink: DeepLinkLaunch? = null, pendingChat: PendingChatLaunch? = 
                 connectionId = entry.arguments?.getString("connectionId") ?: "",
                 botName = entry.arguments?.getString("botName") ?: "",
                 onBack = { nav.popBackStack() },
+                onOpenChat = {
+                    val connectionId = entry.arguments?.getString("connectionId") ?: ""
+                    val botName = entry.arguments?.getString("botName") ?: ""
+                    nav.navigate("chat/${Uri.encode(connectionId)}/${Uri.encode(botName)}")
+                },
             )
         }
         composable("chat/{connectionId}/{botName}") { entry ->

@@ -1,7 +1,7 @@
 package ai.hermes.bots.data
 
 /**
- * Pure display helpers for fenced code blocks (agent-ux-p0-spec.md §2–3). Both halves of the
+ * Pure display helpers for fenced code blocks. Both halves of the
  * fence the renderer used to throw away: the info string becomes a language chip label, and
  * the body gets lightweight highlighting spans. No compose types here — the UI maps spans to
  * styles — so everything is JVM-unit-testable.
@@ -42,7 +42,7 @@ data class CodeSpan(val start: Int, val end: Int, val kind: CodeTokenKind)
 enum class CodeTokenKind { KEYWORD, STRING, COMMENT, NUMBER }
 
 /**
- * Agent-ux-p0-spec.md §3: a deliberately small tokenizer — keywords, strings, comments,
+ * A deliberately small tokenizer — keywords, strings, comments,
  * numbers is the 90% of perceived quality. Single left-to-right scan with string/comment
  * states, so multi-line block comments and strings work; escape sequences don't end a
  * string. Unknown languages still get strings/comments/numbers (family-inferred comments).

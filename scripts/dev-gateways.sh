@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 # Local dev gateways for Hermes Bots integration testing (loopback binds only).
-# Tokens are dev-only literals: the servers bind 127.0.0.1, so exposure is the
-# local machine only. The emulator reaches the 9119 instance at 10.0.2.2:9119.
+# The servers bind to loopback and use a fresh session token for each start.
+# The emulator reaches the 9119 instance at 10.0.2.2:9119.
 #
 #   scripts/dev-gateways.sh start   → launch 9119 (+ 9120 with GATEWAY2=1)
 #   scripts/dev-gateways.sh stop    → kill both
 set -euo pipefail
 
-TOKEN_9119="dev-token-9119"
-TOKEN_9120="dev-token-9120"
+umask 077
+command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
+new_token() { python3 -c 'import secrets; print(secrets.token_urlsafe(32))'; }
+TOKEN_9119="${HERMES_DASHBOARD_SESSION_TOKEN_9119:-$(new_token)}"
+TOKEN_9120="${HERMES_DASHBOARD_SESSION_TOKEN_9120:-$(new_token)}"
 LOG_9119="${TMPDIR:-/tmp}/hermes-serve-9119.log"
 LOG_9120="${TMPDIR:-/tmp}/hermes-serve-9120.log"
 
 case "${1:-start}" in
   start)
     cd "$HOME/.hermes/hermes-agent"
+    : > "$LOG_9119"
+    chmod 600 "$LOG_9119"
     HERMES_DASHBOARD_SESSION_TOKEN="$TOKEN_9119" nohup hermes serve --host 127.0.0.1 --port 9119 \
       > "$LOG_9119" 2>&1 &
     echo "gateway1 pid=$! log=$LOG_9119 (token $TOKEN_9119)"
@@ -24,6 +29,8 @@ case "${1:-start}" in
       # the main home so the default profile has working model credentials.
       GW2_HOME="$HOME/.hermes-gw2"
       mkdir -p "$GW2_HOME"
+      : > "$LOG_9120"
+      chmod 600 "$LOG_9120"
       [[ -f "$GW2_HOME/config.yaml" ]] || cp "$HOME/.hermes/config.yaml" "$GW2_HOME/config.yaml"
       [[ -f "$GW2_HOME/.env" ]] || cp "$HOME/.hermes/.env" "$GW2_HOME/.env" 2>/dev/null || true
       HERMES_HOME="$GW2_HOME" HERMES_DASHBOARD_SESSION_TOKEN="$TOKEN_9120" \

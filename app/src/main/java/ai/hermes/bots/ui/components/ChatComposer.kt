@@ -32,20 +32,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
- * The one composer pill (audit A6): 28 dp-radius surface, `Message {name}` placeholder,
+ * The composer pill: 28 dp-radius surface, `Message {name}` placeholder,
  * ONE trailing action — filled send circle that morphs into a stop circle while streaming.
  * IME Send wiring (Phase-4 ANR fix) is preserved; IME Send steers a running turn.
  * The old separate "Steer" button is gone (steering stays on IME Send).
  * Image attach: a leading + queues an image (image.attach_bytes); the pending chip
  * shows above the field until the send clears it.
  *
- * Incident 2026-09-16 (steering had NO visible affordance on keyboards without a usable
- * IME Send): while streaming, a compact secondary send circle appears whenever the draft
+ * While streaming, a compact secondary send circle appears whenever the draft
  * is submittable, sitting NEXT TO the stop circle — that respects the one-trailing-action
  * design language (the small tonal circle reads as an accessory to the primary stop, and
  * disappears again when the draft clears) while making steer submission always visible.
@@ -62,11 +63,13 @@ fun ChatComposer(
   onSteer: () -> Unit,
   onInterrupt: () -> Unit,
   modifier: Modifier = Modifier,
+  commandRunning: Boolean = false,
   pendingImage: String? = null,
+  pendingFile: String? = null,
   onAttachImage: (() -> Unit)? = null,
   onRemoveImage: () -> Unit = {},
 ) {
-  val canSubmit = value.isNotBlank() || pendingImage != null
+  val canSubmit = value.isNotBlank() || pendingImage != null || pendingFile != null
   Row(
     modifier.fillMaxWidth(),
     verticalAlignment = Alignment.Bottom,
@@ -99,7 +102,7 @@ fun ChatComposer(
               overflow = TextOverflow.Ellipsis,
               modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = onRemoveImage, modifier = Modifier.size(32.dp)) {
+            IconButton(onClick = onRemoveImage, enabled = !commandRunning, modifier = Modifier.size(32.dp)) {
               Icon(
                 Icons.Filled.Close,
                 contentDescription = "Remove image",
@@ -113,12 +116,13 @@ fun ChatComposer(
           value = value,
           onValueChange = onValueChange,
           modifier = Modifier.fillMaxWidth(),
+          enabled = !commandRunning,
           placeholder = {
             Text(placeholder, style = MaterialTheme.typography.bodyMedium)
           },
           leadingIcon = if (onAttachImage != null) {
             {
-              IconButton(onClick = onAttachImage) {
+              IconButton(onClick = onAttachImage, enabled = !commandRunning) {
                 Icon(
                   Icons.Filled.Add,
                   contentDescription = "Attach image",
@@ -133,7 +137,7 @@ fun ChatComposer(
           keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
           keyboardActions = KeyboardActions(
             onSend = {
-              if (canSubmit) {
+              if (canSubmit && !commandRunning) {
                 if (streaming) onSteer() else onSend()
               }
             },
@@ -152,7 +156,7 @@ fun ChatComposer(
       if (isStreaming) {
         Row(verticalAlignment = Alignment.CenterVertically) {
           if (canSubmit) {
-            // 48 dp target (fleet-pulse-ui-spec §2); the 32 dp circle is the visual only.
+            // 48 dp target; the 32 dp circle is visual only.
             IconButton(onClick = onSteer, modifier = Modifier.size(48.dp)) {
               Surface(
                 shape = CircleShape,
@@ -170,7 +174,10 @@ fun ChatComposer(
               }
             }
           }
-          IconButton(onClick = onInterrupt, modifier = Modifier.size(48.dp)) {
+          IconButton(
+            onClick = onInterrupt,
+            modifier = Modifier.size(48.dp).semantics { contentDescription = "Stop run" },
+          ) {
             Surface(
               shape = CircleShape,
               color = MaterialTheme.colorScheme.errorContainer,
@@ -189,7 +196,8 @@ fun ChatComposer(
         }
       } else {
         IconButton(
-          onClick = { if (canSubmit) onSend() },
+          onClick = onSend,
+          enabled = canSubmit && !commandRunning,
           modifier = Modifier.size(48.dp),
         ) {
           Surface(

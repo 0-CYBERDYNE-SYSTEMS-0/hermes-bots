@@ -23,8 +23,8 @@ class FleetConfigCodecTest {
     fun `export envelope carries all connections with secrets`() {
         val text = FleetConfigCodec.export(
             listOf(
-                record("Local", "http://127.0.0.1:9119", GatewayAuth.TokenAuth("dev-9119")),
-                record("m1", "http://100.64.10.10:9300", GatewayAuth.BasicAuth("user", "pw")),
+                record("Local", "http://127.0.0.1:9119", GatewayAuth.TokenAuth("fixture-token")),
+                record("m1", "http://198.51.100.10:9300", GatewayAuth.BasicAuth("user", "pw")),
             ),
         )
         val obj = json.parseToJsonElement(text).jsonObject
@@ -36,20 +36,20 @@ class FleetConfigCodecTest {
         assertEquals("user", m1["user"]!!.jsonPrimitive.content)
         assertEquals("pw", m1["password"]!!.jsonPrimitive.content)
         val local = gateways[0].jsonObject
-        assertEquals("dev-9119", local["token"]!!.jsonPrimitive.content)
+        assertEquals("fixture-token", local["token"]!!.jsonPrimitive.content)
     }
 
     @Test
     fun `import round-trips export`() {
         val original = listOf(
-            record("Local", "http://127.0.0.1:9119", GatewayAuth.TokenAuth("dev-9119")),
-            record("m1", "http://100.64.10.10:9300", GatewayAuth.BasicAuth("user", "pw")),
+            record("Local", "http://127.0.0.1:9119", GatewayAuth.TokenAuth("fixture-token")),
+            record("m1", "http://198.51.100.10:9300", GatewayAuth.BasicAuth("user", "pw")),
         )
         val incoming = FleetConfigCodec.toRecords(FleetConfigCodec.parse(FleetConfigCodec.export(original)))
         assertEquals(2, incoming.size)
         val local = incoming.first { it.label == "Local" }
         assertEquals("http://127.0.0.1:9119", local.baseUrl)
-        assertEquals(GatewayAuth.TokenAuth("dev-9119"), local.auth)
+        assertEquals(GatewayAuth.TokenAuth("fixture-token"), local.auth)
         val m1 = incoming.first { it.label == "m1" }
         assertEquals(GatewayAuth.BasicAuth("user", "pw"), m1.auth)
     }
@@ -66,9 +66,9 @@ class FleetConfigCodecTest {
     @Test
     fun `import defaults blank name to url host`() {
         val entries = FleetConfigCodec.parse(
-            """{"gateways":[{"name":"","url":"http://100.64.10.20:9300","user":"w","password":"p"}]}""",
+            """{"gateways":[{"name":"","url":"http://198.51.100.20:9300","user":"w","password":"p"}]}""",
         )
-        assertEquals("100.64.10.20", entries[0].name)
+        assertEquals("198.51.100.20", entries[0].name)
     }
 
     @Test
@@ -102,7 +102,7 @@ class FleetConfigCodecTest {
         val existing = listOf(record("Local", "http://127.0.0.1:9119"))
         val incoming = listOf(
             record("Local again", "127.0.0.1:9119/"), // same gateway, sloppier form
-            record("m1", "http://100.64.10.10:9300"),
+            record("m1", "http://198.51.100.10:9300"),
         )
         val (toAdd, result) = FleetConfigCodec.merge(existing, incoming)
         assertEquals(1, toAdd.size)

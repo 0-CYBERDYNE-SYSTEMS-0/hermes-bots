@@ -2,9 +2,10 @@ package ai.hermes.bots.data
 
 import ai.hermes.bots.protocol.Catalog
 import ai.hermes.bots.protocol.HermesGateway
-import kotlinx.serialization.json.JsonObject
 import ai.hermes.bots.protocol.RpcException
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /** Bot create/describe/configure/avatar RPCs against one gateway (PROTOCOL.md §5.3). */
 class BotAdminRepository(private val manager: GatewayManager) {
@@ -35,6 +36,27 @@ class BotAdminRepository(private val manager: GatewayManager) {
         BotAdmin.parseDescribe(
             gateway(connectionId).request(Catalog.METHOD_PROFILES_DESCRIBE, BotAdmin.describeParams(name), 60_000),
         )
+
+    /** Read a profile-scoped config key for the editor Prep section. */
+    suspend fun configGet(connectionId: String, profile: String, key: String): JsonObject =
+        gateway(connectionId).request(
+            Catalog.METHOD_CONFIG_GET,
+            BotAdmin.configGetParams(key, profile),
+            60_000,
+        )
+
+    /** Write a profile-scoped config key for the editor Prep section. */
+    suspend fun configSet(
+        connectionId: String,
+        profile: String,
+        key: String,
+        value: JsonElement,
+        confirmExpensiveModel: Boolean = false,
+    ): JsonObject = gateway(connectionId).request(
+        Catalog.METHOD_CONFIG_SET,
+        BotAdmin.configSetParams(key, value, profile, confirmExpensiveModel),
+        60_000,
+    )
 
     /** configure with ui_meta CAS: pass expectedRevisions from the roster row; on CAS failure the
      *  server rejects with 5064 — callers re-read (roster poll) and retry with fresh revisions. */
@@ -75,13 +97,13 @@ class BotAdminRepository(private val manager: GatewayManager) {
         return gateway(connectionId).request(Catalog.METHOD_PROFILES_SET_ASSET, BotAdmin.setAssetParams(name, safe), 60_000)
     }
 
-    // --- model catalog / keys (MODEL-UX-PUNCHLIST.md rev 2 / P1, P3, P7, R9) ---
+    // --- model catalog / keys ---
 
     /**
      * `model.options` with picker hints (`{include_unconfigured: true}`, tui_gateway/
      * methods_complete.py:277-286; handler exceptions surface as 5033). Parsing stays in
      * [ModelCatalog] (pure) so the editor VM and tests can use it without a gateway.
-     * `refresh = true` forces a server-side catalog rebuild (R8).
+     * `refresh = true` forces a server-side catalog rebuild.
      */
     suspend fun modelOptions(connectionId: String, refresh: Boolean = false): JsonObject =
         gateway(connectionId).request(
@@ -92,9 +114,9 @@ class BotAdminRepository(private val manager: GatewayManager) {
 
     /**
      * `model.save_key` `{slug, api_key}` (tui_gateway/methods_complete.py:289-320) with humane
-     * error mapping for the editor's key-paste sheet (P7). Note the server's
+     * error mapping for the editor's key-paste sheet. Note the server's
      * `authenticated: true` reply is SYNTHETIC — any string flips it — so presence is not
-     * validity; a verification turn (ModelVerifier) is the real test (A3/R7).
+     * validity; a verification turn (ModelVerifier) is the definitive test.
      */
     suspend fun saveKey(connectionId: String, slug: String, apiKey: String): JsonObject {
         return try {
@@ -116,7 +138,7 @@ class BotAdminRepository(private val manager: GatewayManager) {
     }
 
     /**
-     * Configure variant that also reports whether the model pin actually landed (R9:
+     * Configure variant that also reports whether the model pin actually landed:
      * `applied.model`, tui_gateway/methods_profiles.py:483-502). The existing [configure]
      * return type is unchanged for BotEditorViewModel compatibility.
      */

@@ -6,13 +6,14 @@ import ai.hermes.bots.data.HealthState
 import ai.hermes.bots.data.ModelHealth
 import ai.hermes.bots.data.ProviderOption
 import ai.hermes.bots.data.RosterEntry
+import androidx.lifecycle.SavedStateHandle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pure-helper coverage for the editor rebuild (MODEL-UX-PUNCHLIST.md rev 2 / W2-E). */
+/** Pure-helper coverage for the editor. */
 class EditorModelTest {
 
   private fun row(
@@ -105,6 +106,49 @@ class EditorModelTest {
     assertTrue(EditorModel.pinChanged("custom", "m-1", "custom", null))
     assertTrue(EditorModel.pinChanged("custom", "m-2", "custom", "m-1"))
     assertTrue(EditorModel.pinChanged("openai", "m-1", "custom", "m-1"))
+  }
+
+  @Test
+  fun `declining a create model pin preserves the rest of the form`() {
+    val state = EditorUiState(
+      name = "scout",
+      description = "Research helper",
+      soul = "Standing instructions",
+      model = "expensive-model",
+      provider = "provider",
+      sectionId = "research",
+      hidden = true,
+      createOnConnectionId = "conn-1",
+      cloneFrom = "default",
+    )
+
+    assertEquals(state.copy(model = "", provider = ""), EditorModel.withoutModelPin(state))
+  }
+
+  @Test
+  fun `create model warning requires an explicit completion action`() {
+    assertTrue(EditorModel.canDismissModelWarning(isEdit = true))
+    assertFalse(EditorModel.canDismissModelWarning(isEdit = false))
+  }
+
+  @Test
+  fun `pending create model warning can be restored after process recreation`() {
+    val pending = PendingCreateModel(
+      connectionId = "conn-1",
+      name = "scout",
+      provider = "custom",
+      model = "expensive-model",
+      warning = "This model may incur extra cost.",
+    )
+    val beforeDeath = SavedStateHandle()
+    PendingCreateModelState.save(beforeDeath, pending)
+
+    val restoredValues = beforeDeath.keys().associateWith { beforeDeath.get<Any?>(it) }
+    val afterRecreation = SavedStateHandle(restoredValues)
+
+    assertEquals(pending, PendingCreateModelState.restore(afterRecreation))
+    PendingCreateModelState.clear(afterRecreation)
+    assertNull(PendingCreateModelState.restore(afterRecreation))
   }
 
   @Test
@@ -320,5 +364,91 @@ class EditorModelTest {
     )
     assertEquals("f2", EditorModel.pickDefaultModel(p, verified, "conn-1"))
     assertEquals("f1", EditorModel.pickDefaultModel(p, emptyMap(), "conn-1"))
+  }
+
+  @Test
+  fun `selected model is not blamed for another model's credit failure`() {
+    val providers = listOf(provider("xai", models = listOf("grok-3", "grok-4")))
+    val entries = mapOf(
+      ModelHealth.keyFor("conn-1", "xai", "") to
+        HealthEntry(HealthState.FAILED, 1L, reason = "Out of credits or billing blocked"),
+      ModelHealth.keyFor("conn-1", "xai", "grok-3") to
+        HealthEntry(HealthState.FAILED, 1L, reason = "Out of credits or billing blocked"),
+    )
+    val (ready, more) = EditorModel.splitProviders(
+      providers, entries, "conn-1", selectedProvider = "xai", selectedModel = "grok-4",
+    )
+    assertEquals(listOf("xai"), ready.map { it.slug })
+    assertTrue(more.isEmpty())
+    assertEquals("grok-3", EditorModel.failedModelId(entries, "conn-1", "xai"))
+    assertEquals(
+      "grok-3 — Out of credits or billing blocked",
+      EditorModel.moreReason(providers[0], entries, "conn-1"),
+    )
+    assertNull(EditorModel.modelVerdictLine(entries, "conn-1", "xai", "grok-4"))
+    assertEquals(
+      "Out of credits or billing blocked",
+      EditorModel.modelVerdictLine(entries, "conn-1", "xai", "grok-3"),
+    )
+  }
+
+  @Test
+  fun `probe uses the selected model even when another model is out of credits`() {
+    val providers = listOf(
+      provider("xai", models = listOf("grok-3", "grok-4"), featured = listOf("grok-3")),
+    )
+    val entries = mapOf(
+      ModelHealth.keyFor("conn-1", "xai", "") to HealthEntry(
+        HealthState.FAILED,
+        System.currentTimeMillis() - 60_000L,
+        reason = "Out of credits or billing blocked",
+      ),
+    )
+    val candidates = EditorModel.probeCandidates(
+      providers,
+      entries,
+      "conn-1",
+      System.currentTimeMillis(),
+      selectedProvider = "xai",
+      selectedModel = "grok-4",
+    )
+    assertEquals(listOf("xai" to "grok-4"), candidates)
+    assertEquals(
+      "grok-4",
+      EditorModel.modelToProbe(providers[0], entries, "conn-1", "xai", "grok-4"),
+    )
+  }
+
+  @Test
+  fun `probe cap still includes the selected provider`() {
+    val providers = listOf(
+      provider("moa", models = listOf("default")),
+      provider("opencode-free", models = listOf("f1")),
+      provider("minimax-oauth", models = listOf("mm")),
+      provider("copilot", models = listOf("c")),
+      provider("zai", models = listOf("z")),
+      provider("deepseek", models = listOf("d")),
+      provider("xai", models = listOf("grok-3", "grok-4"), featured = listOf("grok-3")),
+    )
+    val candidates = EditorModel.probeCandidates(
+      providers,
+      emptyMap(),
+      "conn-1",
+      System.currentTimeMillis(),
+      selectedProvider = "xai",
+      selectedModel = "grok-4",
+    )
+    assertEquals(6, candidates.size)
+    assertEquals("xai" to "grok-4", candidates.first())
+  }
+
+  @Test
+  fun `pick default model skips a model already out of credits`() {
+    val p = provider("xai", models = listOf("grok-3", "grok-4"), featured = listOf("grok-3"))
+    val failed = mapOf(
+      ModelHealth.keyFor("conn-1", "xai", "grok-3") to
+        HealthEntry(HealthState.FAILED, 1L, reason = "Out of credits or billing blocked"),
+    )
+    assertEquals("grok-4", EditorModel.pickDefaultModel(p, failed, "conn-1"))
   }
 }

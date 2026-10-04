@@ -311,7 +311,7 @@ fun RosterScreen(
     sheetFor?.let { m ->
         ModalBottomSheet(onDismissRequest = { sheetFor = null }) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                // Identity header — which bot am I acting on? (A23)
+                // Identity header — which bot am I acting on?
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),

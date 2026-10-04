@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** R11 (MODEL-UX-PUNCHLIST.md rev 2): editor save-flow error mappings. */
+/** Editor save-flow error mappings. */
 class HumanizeErrorTest {
 
   @Test

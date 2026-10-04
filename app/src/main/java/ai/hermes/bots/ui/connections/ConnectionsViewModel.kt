@@ -26,10 +26,10 @@ class ConnectionsViewModel(app: Application) : AndroidViewModel(app) {
 
     val socketStates: StateFlow<Map<String, SocketState>> = graph.gateways.socketStates
 
-    /** Per-connection relay capability + last drain (B5), for the gateway card badge. */
+    /** Per-connection relay capability and last drain, for the gateway card badge. */
     val relayStatus: StateFlow<Map<String, RelayStatus>> = graph.gateways.relayStatus
 
-    /** Last full verification result per normalized base URL (B6), for the card chip. */
+    /** Last full verification result per normalized base URL, for the card chip. */
     private val _verifyResults = MutableStateFlow<Map<String, FleetProbeResult>>(emptyMap())
     val verifyResults: StateFlow<Map<String, FleetProbeResult>> = _verifyResults
 
@@ -50,7 +50,7 @@ class ConnectionsViewModel(app: Application) : AndroidViewModel(app) {
         return graph.gateways.probe(ConnectionRecord("probe", "probe", normalized, auth))
     }
 
-    /** Full verification probe (B6): health + sign-in + chat channel + groups/relay bits. */
+    /** Full verification probe: health + sign-in + chat channel + groups/relay bits. */
     suspend fun verify(baseUrl: String, auth: GatewayAuth): FleetProbeResult {
         val normalized = Auth.normalizeBaseUrl(baseUrl)
         val result = graph.gateways.verifyFleet(ConnectionRecord("probe", "probe", normalized, auth))

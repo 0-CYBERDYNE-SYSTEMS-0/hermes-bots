@@ -1,192 +1,103 @@
 # Hermes Bots for Android
 
-Native Android client (Kotlin + Jetpack Compose, package `ai.hermes.bots`) for
-**[hermes-agent](https://github.com/NousResearch/hermes-agent)** gateways. It connects to any
-number of `hermes serve` gateways (loopback, LAN, or Tailscale) and gives full **bots-mode
-parity** from a phone — the same bots experience the desktop app has, as a pure client.
+Hermes Bots is a native Android client for [Hermes Agent](https://github.com/NousResearch/hermes-agent) gateways. It lets you chat with and manage bots from a phone; the gateway runs the agent, tools, and scheduled jobs.
 
-## Features (v1 scope)
+## Features
 
-- **Bot roster** — union roster across all connected gateways: avatars, sections, search,
-  hidden bots, active-now strip, unread watermarks.
-- **Canonical bot chats** — per-bot forever-chats with streaming markdown, tool-run chips,
-  lettered approval/clarify cards, interrupt/steer, `/new` compression, reconnect catch-up
-  with no lost messages.
-- **Bot editor** — create/clone bots, pin model (`model.options`), edit SOUL.md, toggle
-  skills, set section/hidden, upload an avatar (photo picker, downscaled JPEG data-URL).
-- **Routines** — per-bot cron jobs via the gateway REST API (`/api/cron/jobs` CRUD,
-  pause/resume, `cron.changed` wake).
-- **Group chats** — multi-bot rooms with round-log discussion, member picker, stop/disband.
-- **Multi-gateway** — add any number of gateways; one starred as primary.
-- **Cross-connection A2A relay** — the app itself runs the `bot_relay` loops so bots on
-  different gateways can message each other (`@handle` via the `message_agent` tool).
-- **Local notifications** — post notifications on the device for bot activity.
+- Bot roster across gateways, with search, sections, avatars, hidden bots, and activity indicators.
+- Persistent per-bot chats with streaming replies, approval and clarify cards, interrupt and steer, slash commands, and reconnect recovery.
+- Bot editor for models, skills, profile details, and avatars.
+- Per-bot routines, multi-bot group chats, cross-gateway bot relay, and local activity notifications.
 
-**Deferred to v2**: voice dictation, image generation,
-PTY terminal views, SSH-tunnel/cloud connections, OAuth-portal auth, themes.
+Voice dictation, image generation, terminal views, and OAuth-portal authentication are not currently included.
 
-## Building
+## Gateway compatibility
 
-Prerequisites: **JDK 17** and **Android SDK 35** (platform `platforms;android-35`,
-build-tools 35.0.0, platform-tools).
+Use Hermes Agent **0.21.5 or newer** for the feature set documented here. Android can connect to older gateways for core chat, but newer RPCs may be missing: server-request prompts use a capability introduced in 0.21.4, and gateway slash-command routing is documented against 0.21.5. The app falls back to legacy prompt handling where supported; older gateways may not support slash commands. No maximum gateway version is specified.
+
+## First-time setup
+
+1. Install Hermes Agent on a machine that can stay available, following its [installation instructions](https://github.com/NousResearch/hermes-agent). Use the gateway version above.
+2. Install Hermes Bots on Android from the APK provided by your distributor, or build and install it using the instructions below.
+3. Choose a connection route: configure an [HTTPS network connection](#connect-over-a-network), including the bundled Tailscale setup, or use the [USB setup](#connect-a-usb-phone-for-local-development) for local development.
+4. If adding a gateway manually, open **Gateways → +**, enter its URL, choose **Token** or **User + password**, enter the matching credential, tap **Test**, then **Save**. Star a gateway to make it primary.
+5. Open the bot roster and select a bot to start chatting.
+
+### Connect a USB phone for local development
+
+When Hermes Agent is bound to `127.0.0.1` on the computer, forward its port to the connected phone:
 
 ```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk@17      # macOS/homebrew path; adjust as needed
-export ANDROID_HOME=$HOME/Library/Android/sdk
+export HERMES_DASHBOARD_SESSION_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+printf 'Gateway token (keep it private): %s\n' "$HERMES_DASHBOARD_SESSION_TOKEN"
+hermes serve --host 127.0.0.1 --port 9119
+adb reverse tcp:9119 tcp:9119
+```
+
+Store a stable token in the service environment if the gateway should keep using it after restart. In Hermes Bots, use `http://127.0.0.1:9119` and the gateway token. This loopback route is for local development.
+
+### Connect over a network
+
+Use an **HTTPS URL with a valid certificate** for any remote gateway. A TLS-enabled reverse proxy or an HTTPS endpoint on your private network can forward both HTTP requests and WebSocket traffic to Hermes Agent. Configure gateway authentication as well. The app rejects cleartext HTTP for remote hosts; do not use basic authentication or a gateway token over ordinary LAN or public Wi-Fi HTTP.
+
+For Tailscale, configure an HTTPS endpoint that forwards to the gateway, then connect with its DNS name, for example `https://<machine>.<tailnet>.ts.net`. Do not use an HTTP tailnet IP address.
+
+Configure gateway authentication for every connection. The bundled Tailscale helper provisions a gateway token; if you expose Hermes directly beyond loopback, configure gateway authentication on that server. Android supports gateway tokens and basic username/password authentication; OAuth-portal sign-in is not currently supported.
+
+To provision a gateway with the bundled Tailscale HTTPS setup, run this on the macOS gateway machine:
+
+```bash
+bash scripts/provision-tailnet-gateway.sh --qr
+```
+
+The macOS helper binds Hermes Agent to loopback, exposes it through Tailscale Serve HTTPS, and provisions a persistent gateway token. Keep the machine and phone on the same tailnet. With Python's optional `qrcode` package installed, `--qr` prints a scannable QR code. Without it, the helper prints and saves the deep link as text; you can install `qrcode` and rerun the helper, or add the printed HTTPS URL and token manually in **Gateways → +**. The QR code and deep link carry access information; treat them like a password and do not share or post them.
+
+When entering a remote address, include `https://` explicitly. Scheme-less addresses default to HTTP and are suitable only for loopback development.
+
+## Data and privacy
+
+Hermes Bots connects directly to the gateways you add; it does not host your conversations or run the model. Chat content and actions performed in the app are sent to the selected gateway. The gateway executes tools and routines and may forward prompts to the model provider configured on that machine. Review the gateway operator's and model provider's data practices.
+
+If a model switch triggers a gateway warning about cost or data policy, the app asks before it retries the switch.
+
+Gateway URLs, authentication credentials, and local app preferences are stored in the app's private Android DataStore and excluded from Android backup and device transfer. Re-add gateways after reinstalling or moving to a new device. There is no Hermes Bots cloud account or hosted conversation sync.
+
+## Building and verification
+
+Requirements: JDK 17 and Android SDK 35. The app supports Android 10 (API 29) and newer.
+
+```bash
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Runs on **Android 10 (API 29) or newer** (`minSdk 29`, target/compile SDK 35). The Gradle
-wrapper (Gradle 8.9, AGP 8.7.3, Kotlin 2.0.21, Compose BOM) is canonical — use `./gradlew`,
-not a system Gradle.
-
-## Gateway provisioning
-
-The app talks to a `hermes serve` HTTP+WS server (default port **9119**). Pick the recipe
-that matches where the gateway runs. All recipes were verified end-to-end against a real
-`hermes serve` v0.21.0.
-
-### 1. Start the server with a fixed session token
+Run the unit tests and Android lint before submitting changes:
 
 ```bash
-export HERMES_DASHBOARD_SESSION_TOKEN=<your-token>
-hermes serve --host 0.0.0.0 --port 9119
+./gradlew :app:testDebugUnitTest
+./gradlew :app:lintDebug
 ```
 
-The session token comes from the `HERMES_DASHBOARD_SESSION_TOKEN` env var; if it is unset,
-the server generates a fresh random token per start (`secrets.token_urlsafe(32)`), which you
-would then have to re-enter in the app after every server restart — so set the env var for a
-stable setup.
-
-### 2. Auth mode: token vs basic
-
-- **Loopback binds** (`127.0.0.1`, default) run in plain **token mode** — no auth provider
-  needed, the `?token=` query parameter on the WS upgrade is enough.
-- **Non-loopback binds** (`--host 0.0.0.0`, required for LAN/Tailscale access) **require an
-  auth provider**. Use **basic auth (username & password)** — the server's interactive setup
-  offers basic or OAuth; the app supports basic (OAuth is a v2 deferral).
-
-The app supports **both** credential kinds (session token, or user+password) and detects the
-gateway's mode itself via the public `GET /api/status` → `auth_required` field:
-
-- Token mode: WS upgrade with `?token=<SESSION_TOKEN>`; REST calls send
-  `X-Hermes-Session-Token: <token>`.
-- Gated (basic) mode: `?token=` is rejected — the app mints a single-use WS ticket via
-  `POST /api/auth/ws-ticket` with `Authorization: Basic ...` (30 s TTL) and upgrades with
-  `?ticket=<ticket>`, re-minting on every reconnect.
-
-### 3. Add the gateway in the app
-
-1. **Gateways screen → “+”**.
-2. Enter the base URL (`http(s)://host:port`; scheme-less `host:port` is accepted and
-   defaults to `http://`, port 9119).
-3. Choose **Token** or **User + password** and enter the credential.
-4. Tap **Test** — this probes the HTTP leg (`/api/status`) and the WS leg
-   (`gateway.ready` frame or socket open, 10 s timeout).
-5. **Save**. Star (★) one gateway as **primary** (used for creating bots, groups, etc.).
-
-### Recipe A — USB phone or emulator (development)
-
-Run a **loopback-bound** serve on your dev machine, then reverse the port per device:
+Run the Android launch/navigation smoke test with an attached device or running emulator:
 
 ```bash
-hermes serve --host 127.0.0.1 --port 9119
-adb reverse tcp:9119 tcp:9119     # once per connected device/emulator
+./gradlew :app:connectedDebugAndroidTest
 ```
 
-In the app add a gateway with base URL `http://127.0.0.1:9119` (token mode).
-
-**Why `adb reverse`?** A loopback-bound `hermes serve` rejects upgrades whose HTTP `Host`
-header is not loopback (WS close **4403 `host_mismatch`**). The emulator's `10.0.2.2` alias
-therefore does **not** work; `adb reverse` makes `127.0.0.1:9119` on the device tunnel to the
-Mac's loopback, so the Host header stays `127.0.0.1`. The same recipe works identically for a
-USB phone. The token must match `HERMES_DASHBOARD_SESSION_TOKEN` of that serve process.
-
-### Recipe B — LAN
-
-```bash
-export HERMES_DASHBOARD_SESSION_TOKEN=<your-token>
-hermes serve --host 0.0.0.0 --port 9119     # choose basic auth (username + password) when prompted
-```
-
-In the app: base URL `http://<mac-ip>:9119`, **User + password** mode. The Mac's firewall may
-prompt to allow inbound connections on 9119.
-
-### Recipe C — Tailscale
-
-1. Install Tailscale on the Mac and the phone; join both to the same tailnet.
-2. Start the server as in Recipe B (`--host 0.0.0.0`, basic auth, or set
-   `HERMES_DASHBOARD_SESSION_TOKEN` for token mode).
-3. In the app use `https://<mac>.ts.net:9119` (or the Mac's tailnet IP,
-   `http://100.x.y.z:9119`).
-
-Auth notes: with basic auth configured, use **User + password** — the gateway rejects
-`?token=` in gated mode (the app logs in with your credentials and rides the cookie session
-automatically; per-request Basic headers are not accepted by the server).
-
-### Recipe D — whole fleet on a tailnet (one gateway per Mac)
-
-For a fleet of Macs, give each machine its own tailnet-facing gateway on port **9300** with
-the bundled provisioning script. Run this **on each Mac** (or pipe it over your own SSH):
-
-```bash
-bash scripts/provision-tailnet-gateway.sh          # or: ssh user@mac 'bash -s' < scripts/provision-tailnet-gateway.sh
-```
-
-It configures gated mode (basic auth; password is generated and printed on first run),
-installs a LaunchAgent (`ai.hermes.tailnet-gateway`, keep-alive + boots on restart), and
-prints the exact URL + credentials for the app. Then add it in the app:
-Gateways → + → `http://<mac-tailnet-ip>:9300` → **User + pass** → Test → Save.
-
-Each gateway serves that machine's `~/.hermes` — its bots appear in the roster under the
-connection's own section, and the app relays messages between bots on different gateways
-automatically.
-
-## Architecture notes
-
-- The app is a **pure client + relay** — it never runs the agent itself; all LLM turns,
-  tools, and cron executions happen on the gateway.
-- One **WebSocket** per connection (`/api/ws`, JSON-RPC, one object per text frame). Client
-  heartbeat `gateway.ping` every **15 s**; no ack within **45 s** → dead socket, force
-  reconnect with exponential backoff **1 s → 30 s cap**. On reconnect, per-session catch-up
-  via `session.events.since`; a changed `replay_epoch` or truncated replay falls back to a
-  full `session.resume`. Canonical bot chats use `close_on_disconnect:false` so they survive
-  mobile disconnects.
-- **Union roster**: bots from all gateways are merged into one roster (name-qualified per
-  connection); polled every 5 s with `sessions.changed` pushes as a demotion trigger.
-- **Relay loops** (the app plays the role the desktop's relay plays): `bot_relay.roster.sync`
-  every **60 s**; `bot_relay.outbox.drain` every **30 s** plus immediately on the
-  `bot_relay.outbox.pending` push (debounced); `bot_relay.deliver` is blocking with a client
-  timeout **> 1320 s** (120 s lock-wait + 600 s turn × 2 attempts); unknown-method
-  (`-32601`) marks the gateway `relay_unsupported`.
-- **Secrets** (tokens, passwords) live only in app-private **DataStore**; never logged,
-  never committed.
+See the [build and documentation index](docs/README.md) and the [CI workflow](.github/workflows/ci.yml). CI may expose a debug APK as a GitHub Actions artifact for 7 days; this is a temporary build artifact. The repository does not document a signed, stable public APK distribution channel.
 
 ## Troubleshooting
 
-- **WS close `4403 host_mismatch`** — the server is loopback-bound and saw a non-loopback
-  `Host` header. Either use the `adb reverse` recipe (Recipe A) with `http://127.0.0.1:9119`,
-  or bind the server to `0.0.0.0` (Recipes B/C). Do not rewrite the Host header.
-- **WS close `4401` (bad credential)** — wrong/expired token, or the server is in gated
-  (basic-auth) mode where `?token=` is rejected. Re-check the credential in the Gateways
-  screen; the **Test** probe re-runs `GET /api/status` mode detection.
-- **Bot has no `message_agent` tool** (can't participate in relay) — a profile only becomes a
-  relay-capable bot when it carries `ui_meta["hermes-bots"]`. Fix: edit the bot once in the
-  app (change its section or color) and save; that writes the `ui_meta` key.
-- **No notifications** — Android 13+ requires the runtime `POST_NOTIFICATIONS` permission;
-  grant it when the app asks (or in system settings → Apps → Hermes Bots → Notifications).
+- **Connection test fails:** Confirm the gateway is running, the URL uses the right scheme, and the certificate is valid for HTTPS connections.
+- **WebSocket close `4401`:** Check the token or username/password and confirm the gateway's authentication mode.
+- **WebSocket close `4403 host_mismatch` on USB:** Use `adb reverse` and `http://127.0.0.1:9119` for the local development route.
+- **Slash commands are unavailable:** Check that the gateway is version 0.21.5 or newer.
+- **No notifications:** Android 13 and newer require notification permission. Grant it when prompted or in Android Settings → Apps → Hermes Bots → Notifications.
 
-## Repo layout
+## Developer references
 
-Single-module Gradle project: `app/src/main/java/ai/hermes/bots/` is split into `protocol/`
-(WS/JSON-RPC/auth core), `data/` (repositories, DataStore), `ui/` (Compose screens:
-connections, roster, chat, editor, routines, groups, theme), `notify/` (local notifications);
-`scripts/` holds dev + provisioning helpers (`env.sh`, `bootstrap-toolchain.sh`,
-`dev-gateways.sh`, `install-phone.sh`, `provision-tailnet-gateway.sh`, `verify-two-way.py`).
-
-- **[PROTOCOL.md](PROTOCOL.md)** is the wire contract — every RPC string the app speaks, with
-  citations into the hermes-agent source. Do not invent variants.
+- [PROTOCOL.md](PROTOCOL.md) documents the gateway wire contract for contributors.
+- [docs/README.md](docs/README.md) links the setup, build, and verification references.
 
 ## License
 

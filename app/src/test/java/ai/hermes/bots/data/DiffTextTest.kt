@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Agent-ux P0 (spec §4): tolerant `inline_diff` extraction and unified-diff classification. */
+/** Tolerant `inline_diff` extraction and unified-diff classification. */
 class DiffTextTest {
 
     private val sample = """

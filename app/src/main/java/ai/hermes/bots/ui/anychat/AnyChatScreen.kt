@@ -105,7 +105,7 @@ data class AnyChatRoomUi(
 )
 
 /**
- * AnyChat (FLEET-CONNECT-SPEC B2): client-orchestrated cross-gateway rooms. The repo owns
+ * AnyChat uses client-orchestrated cross-gateway rooms. The repo owns
  * the per-member canonical sessions; this VM only projects repo state for the UI.
  */
 class AnyChatViewModel(app: Application, private val roomId: String?) : AndroidViewModel(app) {
@@ -121,7 +121,7 @@ class AnyChatViewModel(app: Application, private val roomId: String?) : AndroidV
     val roster: StateFlow<List<RosterEntry>> = graph.roster.roster
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** B4: bot names present on more than one connection. */
+    /** Bot names present on more than one connection. */
     val collisionNames: StateFlow<Set<String>> = graph.roster.roster
         .map { rows -> BotNameCollisions.compute(rows.map { it.bot }) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
@@ -516,7 +516,7 @@ private fun AnyChatEntryView(entry: AnyChatEntry, avatar: AvatarImage?) {
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    // AnyChat always tags the owning gateway (spec B2: av + gateway chip).
+                    // AnyChat always tags the owning gateway with its avatar and gateway chip.
                     entry.gatewayLabel?.let { ConnectionChip(it) }
                 }
                 Surface(
@@ -547,10 +547,11 @@ private fun AnyChatEntryView(entry: AnyChatEntry, avatar: AvatarImage?) {
 @Composable
 private fun ToolChipRow(entry: AnyChatEntry) {
     var open by remember(entry.id) { mutableStateOf(false) }
-    // Q7 (QA 2026-09-14): "Show all" unclamps the summary + output inside the chip.
+    // "Show all" unclamps the summary and output inside the chip.
     var showAll by remember(entry.id) { mutableStateOf(false) }
+    val detailsScrollState = rememberScrollState()
     val expandable = entry.summary != null || entry.text.isNotBlank() || entry.outputText != null
-    // Q8: humane label on the chip face; the raw name stays in the expandable detail.
+    // Show a humane label on the chip face; keep the raw name in the expandable detail.
     val toolLabel = ai.hermes.bots.ui.util.Humanize.toolLabel(entry.toolName)
     Column(Modifier.fillMaxWidth().padding(start = 36.dp)) {
         Surface(
@@ -572,7 +573,7 @@ private fun ToolChipRow(entry: AnyChatEntry) {
                             color = MaterialTheme.colorScheme.secondary,
                         )
                     } else {
-                        // Q12 (QA 2026-09-14): parity with the canonical chip — settled runs
+                        // Match the canonical chip: settled runs
                         // carry a state icon; failed runs render error-tinted, not success.
                         Icon(
                             if (entry.failed) Icons.Outlined.Warning else Icons.Outlined.CheckCircle,
@@ -607,7 +608,7 @@ private fun ToolChipRow(entry: AnyChatEntry) {
                     }
                 }
                 if (open) {
-                    // Q8 fidelity: the raw tool name stays readable in the detail.
+                    // Keep the raw tool name readable in the detail.
                     entry.toolName?.takeIf {
                         it.isNotBlank() && !it.equals(toolLabel, ignoreCase = true)
                     }?.let {
@@ -619,40 +620,47 @@ private fun ToolChipRow(entry: AnyChatEntry) {
                             modifier = Modifier.padding(top = 6.dp),
                         )
                     }
-                    // Q5 (QA 2026-09-14): clamp the summary; "Show all" reveals the full text.
-                    entry.summary?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp),
-                            maxLines = if (showAll) 24 else 6,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (entry.text.isNotBlank()) {
-                        Text(
-                            entry.text,
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                            maxLines = if (showAll) 24 else 8,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    // Q7 follow-up (live QA 2026-09-14): the run's own output — on
-                    // non-verbose sessions this is flattened from the `result` payload.
-                    entry.outputText?.let {
-                        Text(
-                            it,
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                            maxLines = if (showAll) 24 else 8,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().then(
+                            if (showAll) {
+                                Modifier.heightIn(max = 240.dp).verticalScroll(detailsScrollState)
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    ) {
+                        entry.summary?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp),
+                                maxLines = if (showAll) Int.MAX_VALUE else 6,
+                                overflow = if (showAll) TextOverflow.Clip else TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (entry.text.isNotBlank()) {
+                            Text(
+                                entry.text,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                                maxLines = if (showAll) Int.MAX_VALUE else 8,
+                                overflow = if (showAll) TextOverflow.Clip else TextOverflow.Ellipsis,
+                            )
+                        }
+                        entry.outputText?.let {
+                            Text(
+                                it,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                                maxLines = if (showAll) Int.MAX_VALUE else 8,
+                                overflow = if (showAll) TextOverflow.Clip else TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                     if (entry.summary != null || entry.text.isNotBlank() || entry.outputText != null) {
                         Text(
@@ -660,8 +668,10 @@ private fun ToolChipRow(entry: AnyChatEntry) {
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .clickable { showAll = !showAll }
-                                .padding(top = 4.dp, bottom = 2.dp),
+                                .padding(vertical = 4.dp),
                         )
                     }
                 }
@@ -670,7 +680,7 @@ private fun ToolChipRow(entry: AnyChatEntry) {
     }
 }
 
-/** Streaming caret, matching the canonical chat (grok-shine A8). */
+/** Streaming caret, matching the canonical chat. */
 @Composable
 private fun BlinkingCaret() {
     val transition = rememberInfiniteTransition(label = "caret")

@@ -7,7 +7,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** One renderable transcript row: a chat item or a centered time separator (audit A5). */
+/** One renderable transcript row: a chat item or a centered time separator. */
 sealed interface TranscriptRow {
   val key: String
 

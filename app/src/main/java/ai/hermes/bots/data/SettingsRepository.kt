@@ -62,7 +62,7 @@ class SettingsRepository(private val context: Context) {
         .map { prefs -> prefs[keyHistorySeenAt] ?: 0L }
         .stateIn(scope, SharingStarted.Eagerly, 0L)
 
-    /** Bubble Mode (UI-SPEC.md §4.2 rev): iMessage-style Bot Chat transcript; default ON. */
+    /** Bubble Mode: iMessage-style Bot Chat transcript; default ON. */
     val bubbleMode: StateFlow<Boolean> = context.settingsStore.data
         .map { prefs -> prefs[keyBubbleMode] ?: true }
         .stateIn(scope, SharingStarted.Eagerly, true)

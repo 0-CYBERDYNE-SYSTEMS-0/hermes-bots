@@ -18,7 +18,7 @@ import org.junit.Test
 import java.net.ServerSocket
 
 /**
- * B6: full verification probe against a simulated gateway (MockWebServer REST + WS upgrade).
+ * Full verification probe against a simulated gateway (MockWebServer REST + WS upgrade).
  * The fake gateway speaks the real framing: gateway.ready push first, JSON-RPC responses by id.
  */
 class FleetProbeTest {
@@ -108,7 +108,7 @@ class FleetProbeTest {
 
     @Test
     fun `gated mode logs in mints ticket and upgrades with it`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"auth_required":true,"version":"0.21.0"}"""))
+        server.enqueue(MockResponse().setBody("""{"auth_required":true,"auth_providers":["basic"],"version":"0.21.0"}"""))
         // mintTicket: first call 401 (no cookie yet) → providers → password-login → ticket.
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"detail":"no_cookie"}"""))
         server.enqueue(MockResponse().setBody(
@@ -135,6 +135,23 @@ class FleetProbeTest {
         assertEquals("/api/auth/providers", server.takeRequest().path)
         assertEquals("/auth/password-login", server.takeRequest().path)
         assertEquals("/api/auth/ws-ticket", server.takeRequest().path) // retry with session
+    }
+
+    @Test
+    fun `portal-only gateway reports portal sign-in instead of bad password`() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"auth_required":true,"auth_providers":["nous"],"version":"0.21.0"}""",
+            ),
+        )
+        val result = FleetProbe.run(client, baseUrl(), GatewayAuth.BasicAuth("user", "pw"), budgets)
+        assertFalse(result.verified)
+        assertTrue(result.reachable)
+        assertEquals(
+            "This gateway requires portal sign-in, which this app doesn't support yet. Enable basic auth on the gateway host or use another gateway.",
+            result.failure,
+        )
+        assertEquals("/api/status", server.takeRequest().path)
     }
 
     @Test

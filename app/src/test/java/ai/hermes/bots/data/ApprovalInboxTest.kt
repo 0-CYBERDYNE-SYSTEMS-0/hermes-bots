@@ -11,7 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pure state transitions of the approval inbox (UI-SPEC.md §4.6 "Needs you"). */
+/** Pure state transitions of the approval inbox. */
 class ApprovalInboxTest {
 
   private class RecordingSender : ApprovalRpcSender {
@@ -130,6 +130,31 @@ class ApprovalInboxTest {
     }
     assertEquals(1, inbox.pending.value.size)
     assertFalse(inbox.pending.value.single().expired)
+  }
+
+  @Test
+  fun `restored notification approval stays in inbox after response failure`() = runBlocking {
+    val (inbox, sender) = inboxWithTick()
+    val restored = inbox.onBlockingPrompt(
+      connectionId = "c1",
+      botName = "scout",
+      sessionId = "s1",
+      card = card("restored", command = "run deploy", choices = listOf("once", "deny")),
+    )!!
+    sender.fail = true
+
+    try {
+      inbox.respond(restored, "deny")
+      org.junit.Assert.fail("expected IOException")
+    } catch (_: IOException) {
+    }
+
+    val retryable = inbox.pending.value.single()
+    assertEquals("restored", retryable.card.requestId)
+    assertEquals("c1", retryable.connectionId)
+    assertEquals("s1", retryable.sessionId)
+    assertEquals("run deploy", retryable.card.command)
+    assertEquals(listOf("once", "deny"), retryable.card.choices)
   }
 
   @Test

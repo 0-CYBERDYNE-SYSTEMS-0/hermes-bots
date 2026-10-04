@@ -39,6 +39,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -46,6 +48,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.launch
+import java.util.UUID
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,17 +70,22 @@ fun GroupChatScreen(
     ),
 ) {
     val ui by vm.ui.collectAsState()
-    var draft by remember { mutableStateOf("") }
+    var draft by rememberSaveable { mutableStateOf("") }
+    var pendingSendId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingSendText by rememberSaveable { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(false) }
     var confirmDisband by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
     // Control-plane events (turn.settled, room.activity, …) stay out of the user's
-    // round log — only user/member messages render (UI-SPEC §5.8: no raw protocol names).
+    // The round log shows only user and member messages, never raw protocol names.
     val roundLog = remember(ui.log) {
         ui.log.filter { it.kind == "message.user" || it.kind.startsWith("message.member") || it.kind == "message.agent" }
     }
+    val sendDraft = GroupSendDraftState(draft, pendingSendId, pendingSendText)
+    val unconfirmedSend = unconfirmedGroupSend(sendDraft, ui.sendOutcome, ui.busy)
     // Follow new rounds only while the reader is already near the bottom — never
     // yank the list while they've scrolled up to read history.
     LaunchedEffect(roundLog.size, ui.pending.size) {
@@ -87,6 +96,16 @@ fun GroupChatScreen(
     }
     LaunchedEffect(ui.message) { ui.message?.let { snackbar.showSnackbar(it) } }
     LaunchedEffect(ui.disbanded) { if (ui.disbanded) onBack() }
+    LaunchedEffect(ui.sendOutcome) {
+        val outcome = ui.sendOutcome ?: return@LaunchedEffect
+        val settled = resolveGroupSendDraft(
+            GroupSendDraftState(draft, pendingSendId, pendingSendText),
+            outcome,
+        )
+        draft = settled.text
+        pendingSendId = settled.pendingEventId
+        pendingSendText = settled.pendingText
+    }
 
     Scaffold(
         topBar = {
@@ -152,14 +171,46 @@ fun GroupChatScreen(
                     }
                 }
             }
+            unconfirmedSend?.let { attempt ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Delivery not confirmed. Retry this message before sending an edit.",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(
+                        enabled = !ui.busy,
+                        onClick = {
+                            if (vm.send(attempt.text, attempt.eventId)) {
+                                pendingSendId = attempt.eventId
+                                pendingSendText = attempt.text
+                            }
+                        },
+                    ) { Text("Retry message") }
+                }
+            }
             ai.hermes.bots.ui.components.ChatComposer(
                 value = draft,
                 onValueChange = { draft = it },
                 placeholder = "Message the group",
                 streaming = false,
                 onSend = {
-                    vm.send(draft)
-                    draft = ""
+                    val text = draft.trim()
+                    if (text.isNotEmpty()) {
+                        if (!canSubmitGroupDraft(text, unconfirmedSend)) {
+                            scope.launch {
+                                snackbar.showSnackbar("Retry the previous message before sending this edit.")
+                            }
+                        } else {
+                            val submitted = unconfirmedSend?.let { it.text to it.eventId }
+                                ?: (text to groupSendEventId(sendDraft, text, UUID.randomUUID().toString()))
+                            if (vm.send(submitted.first, submitted.second)) {
+                                pendingSendId = submitted.second
+                                pendingSendText = submitted.first
+                            }
+                        }
+                    }
                 },
                 onSteer = {},
                 onInterrupt = {},
@@ -189,7 +240,7 @@ private fun PendingActionCard(
     onResolve: (ai.hermes.bots.data.GroupPendingAction, String) -> Unit,
     onRetry: (ai.hermes.bots.data.GroupPendingAction) -> Unit,
 ) {
-    // Q10 (QA 2026-09-14): resolve the member's display name off the room roster instead of
+    // Resolve the member's display name from the room roster instead of
     // rendering the raw profile slug; humane fallback when the wire carries no name.
     val memberName = action.memberId?.let { memberNames[it] }
     Card(
@@ -244,7 +295,7 @@ private fun GroupLogItem(entry: ai.hermes.bots.data.GroupLogEntry) {
                 )
             }
         }
-        // Member message = 28 dp blobatar gutter + soft container (A19); name is quiet gray.
+        // Member message uses a 28 dp blobatar gutter and soft container; name is quiet gray.
         entry.kind == "message.member" || entry.kind == "message.agent" -> {
             val actor = entry.actor ?: "bot"
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -272,6 +323,6 @@ private fun GroupLogItem(entry: ai.hermes.bots.data.GroupLogEntry) {
                 }
             }
         }
-        // Unknown/control kinds never render raw protocol strings (A19).
+        // Unknown/control kinds never render raw protocol strings.
     }
 }

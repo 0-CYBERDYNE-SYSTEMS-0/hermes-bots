@@ -37,7 +37,7 @@ class GroupsViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(GroupsUiState())
     val ui: StateFlow<GroupsUiState> = _ui
 
-    /** B4: bot names present on more than one connection across the union roster. */
+    /** Bot names present on more than one connection across the union roster. */
     val collisionNames: StateFlow<Set<String>> = graph.roster.roster
         .map { rows -> ai.hermes.bots.data.BotNameCollisions.compute(rows.map { it.bot }) }
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptySet())

@@ -10,8 +10,8 @@ import kotlinx.serialization.json.put
 
 /**
  * One blocking prompt (approval/clarify/sudo/secret — PROTOCOL.md §5.5) waiting on the
- * user, gathered across ALL connections for the Activity screen's "Needs you" section
- * (UI-SPEC.md §4.6). Fed by the per-connection gateway event collectors in AppGraph.
+ * user, gathered across all connections for the Activity screen's "Needs you" section.
+ * Fed by the per-connection gateway event collectors in AppGraph.
  */
 data class PendingApproval(
   val connectionId: String,

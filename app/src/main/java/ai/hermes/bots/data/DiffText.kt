@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** One classified row of a unified diff (agent-ux-p0-spec.md §4). */
+/** One classified row of a unified diff. */
 data class DiffLine(val kind: DiffLineKind, val text: String)
 
 enum class DiffLineKind { FILE, META, HUNK, ADD, DEL, CONTEXT }

@@ -20,14 +20,14 @@ class BotAdminPinTest {
     fun `parse create prefers the path's last segment as the canonical id (R3)`() {
         val out = BotAdmin.parseCreate(
             result(
-                """{"ok":true,"name":"Validator 2","path":"/home/u/.hermes/profiles/validator-2",
+                """{"ok":true,"name":"Validator 2","path":"/profiles/validator-2",
                    "soul_written":true,"model_set":true,"mirrored":{"soul":true}}""",
             ),
         )
         assertTrue(out.ok)
         assertEquals("validator-2", out.name)
         assertTrue(out.modelSet)
-        assertEquals("/home/u/.hermes/profiles/validator-2", out.path)
+        assertEquals("/profiles/validator-2", out.path)
     }
 
     @Test

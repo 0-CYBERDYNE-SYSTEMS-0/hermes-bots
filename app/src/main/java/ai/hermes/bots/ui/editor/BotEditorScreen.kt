@@ -74,6 +74,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -91,7 +92,7 @@ fun BotEditorScreen(
         factory = viewModelFactory {
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as ai.hermes.bots.HermesBotsApp
-                BotEditorViewModel(app, editConnectionId, editName)
+                BotEditorViewModel(app, editConnectionId, editName, createSavedStateHandle())
             }
         },
     ),
@@ -110,6 +111,8 @@ fun BotEditorScreen(
 
     // A stray swipe or tap on the back arrow must not throw away an authored SOUL.md.
     BackHandler(enabled = dirty && !ui.saving && !ui.saved) { confirmDiscard = true }
+    BackHandler(enabled = ui.confirmMessage != null && !ui.isEdit) { }
+    val createModelConfirmation = ui.confirmMessage != null && !ui.isEdit
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -156,7 +159,9 @@ fun BotEditorScreen(
                 navigationIcon = {
                     IconButton(onClick = {
                         if (dirty && !ui.saving && !ui.saved) confirmDiscard = true else onBack()
-                    }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    }, enabled = !createModelConfirmation) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
                 },
             )
         },
@@ -175,7 +180,8 @@ fun BotEditorScreen(
                     val doneMode = ui.savedPhase && !ui.pinChanged
                     Button(
                         onClick = { if (doneMode) onBack() else vm.save() },
-                        enabled = doneMode || (!ui.saving && (ui.isEdit || (ui.name.isNotBlank() && ui.nameProblem == null))),
+                        enabled = doneMode || (ui.confirmMessage == null && !ui.saving &&
+                            (ui.isEdit || (ui.name.isNotBlank() && ui.nameProblem == null))),
                     ) {
                         Text(
                             when {
@@ -273,7 +279,7 @@ fun BotEditorScreen(
                 healthMap = healthMap,
                 rosterRows = rosterRows,
                 onProvider = { vm.setProvider(it) },
-                onModel = { m -> vm.set { st -> st.copy(model = m) } },
+                onModel = { m -> vm.setModel(m) },
                 onAdoptPin = { p, m -> vm.adoptPinFrom(p, m) },
                 onManualEntry = { vm.setManualEntry(true) },
                 onBackToList = { vm.setManualEntry(false) },
@@ -285,6 +291,13 @@ fun BotEditorScreen(
                 onAddKey = { keyDialogFor = it },
                 onRetest = { vm.retest() },
             )
+            if (ui.isEdit) {
+                PrepSection(
+                    ui = ui,
+                    onApprovalMode = vm::setApprovalMode,
+                    onRetry = vm::retryPrep,
+                )
+            }
             OutlinedTextField(
                 value = ui.description,
                 onValueChange = { n -> vm.set { it.copy(description = n) } },
@@ -353,6 +366,37 @@ fun BotEditorScreen(
         )
     }
 
+    ui.confirmMessage?.let { warning ->
+        AlertDialog(
+            onDismissRequest = {
+                if (EditorModel.canDismissModelWarning(ui.isEdit)) vm.dismissModelConfirmation()
+            },
+            title = { Text("Confirm model") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!ui.isEdit) {
+                        Text("The profile is already created without a model pin. Choose an action to finish setup.")
+                    }
+                    Text(warning)
+                    ui.error?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = vm::confirmModelSave, enabled = !ui.saving) {
+                    Text(if (ui.saving) "Saving…" else "Confirm")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = if (ui.isEdit) vm::dismissModelConfirmation else vm::createWithoutModel,
+                    enabled = !ui.saving,
+                ) { Text(if (ui.isEdit) "Cancel" else "Create without model") }
+            },
+        )
+    }
+
     if (confirmDiscard) {
         AlertDialog(
             onDismissRequest = { confirmDiscard = false },
@@ -365,6 +409,88 @@ fun BotEditorScreen(
                 TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") }
             },
         )
+    }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PrepSection(
+    ui: EditorUiState,
+    onApprovalMode: (String) -> Unit,
+    onRetry: () -> Unit,
+) {
+    val prepControlsEnabled = ui.prepLoaded && !ui.loading && !ui.prepLoading &&
+        ui.prepError == null && !ui.prepSaving
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Prep", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Approval and question settings for this bot",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (ui.prepLoading) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("Loading Prep settings…", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            ui.prepError?.let { error ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onRetry) { Text("Retry") }
+                }
+            }
+            Text("Approval mode", style = MaterialTheme.typography.labelMedium)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf("manual" to "Manual", "smart" to "Smart", "off" to "Off").forEach { (value, label) ->
+                    FilterChip(
+                        selected = ui.approvalMode == value,
+                        enabled = prepControlsEnabled,
+                        onClick = { onApprovalMode(value) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+            Text(
+                "Approval timeout: ${ui.approvalTimeoutSeconds.takeIf { it.isNotBlank() }?.let { "$it seconds" } ?: "Not reported"}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Question timeout: ${ui.clarifyTimeoutSeconds.takeIf { it.isNotBlank() }?.let { "$it seconds" } ?: "Not reported"}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text("Always allow", style = MaterialTheme.typography.labelMedium)
+            Text(
+                when {
+                    !ui.commandAllowlistReported -> "Not reported"
+                    ui.commandAllowlist.isEmpty() -> "None"
+                    else -> ui.commandAllowlist.joinToString("\n")
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Edit timeout and always-allow settings on the gateway host.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -519,7 +645,7 @@ private fun StartFromDropdown(startFrom: String?, donorNames: List<String>, onPi
 }
 
 /**
- * P4: the model section is PRIMARY — always visible, no "Advanced" disclosure. Provider
+ * The model section is primary and always visible, with no "Advanced" disclosure. Provider
  * dropdown (authenticated first) → model dropdown scoped to the provider with search →
  * inline key paste / warnings / verification row.
  */
@@ -583,7 +709,7 @@ private fun ModelSection(
                 }
             }
 
-            // A4: the loaded pin isn't offered on this gateway — keep the raw value or clear it.
+            // The loaded pin isn't offered on this gateway — keep the raw value or clear it.
             if (ui.pinUnlisted) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
@@ -606,7 +732,7 @@ private fun ModelSection(
 
             val models = ModelCatalog.modelsFor(ui.providers, ui.provider)
             if (ui.manualEntry) {
-                // Desktop-parity escape hatch: free-text provider/model, stacked full-width —
+                // Free-text escape hatch: provider/model entries, stacked full-width —
                 // two half-width columns side by side are cramped thumb territory on a phone.
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -628,6 +754,7 @@ private fun ModelSection(
             } else {
                 ProviderDropdown(
                     selectedSlug = ui.provider,
+                    selectedModel = ui.model,
                     providers = ui.providers,
                     connectionId = ui.createOnConnectionId,
                     healthMap = healthMap,
@@ -635,7 +762,7 @@ private fun ModelSection(
                     onSelect = onProvider,
                     onManual = onManualEntry,
                 )
-                // A1: adopt another bot's proven pin in one tap.
+                // Adopt another bot's proven pin in one tap.
                 val exclude = when {
                     ui.isEdit -> ui.name
                     ui.savedPhase -> ui.nameSlug
@@ -650,7 +777,8 @@ private fun ModelSection(
                     ) {
                         candidates.forEach { (name, p, m) ->
                             FilterChip(
-                                selected = false,
+                                selected = ui.provider.equals(p, ignoreCase = true) &&
+                                    ui.model.equals(m, ignoreCase = true),
                                 onClick = { onAdoptPin(p, m) },
                                 label = { Text("Same as $name") },
                             )
@@ -668,7 +796,7 @@ private fun ModelSection(
                         ui.providers.firstOrNull { it.slug == ui.provider }?.models.isNullOrEmpty(),
                     onSelect = onModel,
                 )
-                // R8: an authenticated provider with no listed models is real (openrouter) —
+                // An authenticated provider with no listed models is valid —
                 // offer a forced server-side catalog rebuild.
                 val providerRow = ui.providers.firstOrNull { it.slug == ui.provider }
                 if (ui.provider.isNotBlank() && models.isEmpty() && providerRow?.authenticated == true &&
@@ -678,7 +806,7 @@ private fun ModelSection(
                 }
             }
 
-            // A2: bare custom:* model ids 400 at turn time on vendor-prefixed endpoints.
+            // Bare custom:* model ids return 400 at turn time on vendor-prefixed endpoints.
             if (!ui.manualEntry && ModelCatalog.needsVendorPrefixWarning(ui.provider, ui.model)) {
                 Text(
                     "This endpoint expects vendor-prefixed ids — e.g. vendor/model",
@@ -687,7 +815,7 @@ private fun ModelSection(
                 )
             }
 
-            // P7: inline key paste for unauthenticated api-key providers; guidance otherwise.
+            // Inline key paste for unauthenticated API-key providers; guidance otherwise.
             val selected = ui.providers.firstOrNull { it.slug == ui.provider }
             if (selected != null && !selected.authenticated) {
                 when {
@@ -710,6 +838,7 @@ private fun ModelSection(
             }
 
             HealthRow(
+                model = ui.model,
                 entry = health,
                 hasSavedPin = ui.pinProvider != null && ui.pinModel != null,
                 candidatePin = !ui.isEdit && ui.provider.isNotBlank() && ui.model.isNotBlank(),
@@ -732,6 +861,7 @@ private fun HelperLine(text: String) {
 @Composable
 private fun ProviderDropdown(
     selectedSlug: String,
+    selectedModel: String,
     providers: List<ProviderOption>,
     connectionId: String,
     healthMap: Map<String, HealthEntry>,
@@ -744,8 +874,8 @@ private fun ProviderDropdown(
     // Probe-backed grouping: only rows that verifiably work lead the list (the gateway's
     // authenticated flag lies — live probes found "no credentials" / "out of quota" /
     // "model not supported" providers wearing ✓). Everything else hides behind an expander.
-    val (ready, more) = remember(providers, healthMap, connectionId) {
-      EditorModel.splitProviders(providers, healthMap, connectionId)
+    val (ready, more) = remember(providers, healthMap, connectionId, selectedSlug, selectedModel) {
+      EditorModel.splitProviders(providers, healthMap, connectionId, selectedSlug, selectedModel)
     }
     val ordered = if (showMore) ready + more else ready
     val selected = providers.firstOrNull { it.slug == selectedSlug }
@@ -762,7 +892,7 @@ private fun ProviderDropdown(
             label = { Text("Provider") },
             supportingText = if (selected != null && EditorModel.showGatewayWarning(selected)) {
                 {
-                    // A2: gateway notice as the supporting line once selected — only when it
+                    // Show the gateway notice as the supporting line once selected — only when it
                     // reads as humane copy (setup commands leak through otherwise; the
                     // key/sign-in guidance block under the field covers those).
                     Text(
@@ -921,18 +1051,36 @@ private fun ModelDropdown(
                         .verticalScroll(rememberScrollState()),
                 ) {
                     shown.forEach { m ->
+                        val picked = m.equals(selectedModel, ignoreCase = true)
+                        val verdict = EditorModel.modelVerdictLine(healthMap, connectionId, providerSlug, m)
+                        val failed = verdict != null &&
+                            EditorModel.modelHealthHint(healthMap, connectionId, providerSlug, m) == null &&
+                            verdict != "Checking…"
                         DropdownMenuItem(
                             text = {
                                 Column {
-                                    Text(m, style = MaterialTheme.typography.bodyLarge)
-                                    EditorModel.modelHealthHint(healthMap, connectionId, providerSlug, m)?.let { hint ->
+                                    Text(
+                                        m,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = if (picked) FontWeight.SemiBold else FontWeight.Normal,
+                                    )
+                                    verdict?.let { line ->
                                         Text(
-                                            hint,
+                                            line,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.primary,
+                                            color = if (failed) {
+                                                MaterialTheme.colorScheme.error
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            },
                                         )
                                     }
                                 }
+                            },
+                            leadingIcon = if (picked) {
+                                { Icon(Icons.Filled.Check, contentDescription = "Selected model") }
+                            } else {
+                                null
                             },
                             onClick = { onSelect(m); expanded = false; query = "" },
                         )
@@ -952,9 +1100,10 @@ private fun ModelDropdown(
 
 private const val MAX_RENDERED_MODELS = 100
 
-/** P9/A5: the verification verdict row under the model dropdown. */
+/** The verification verdict row under the model dropdown. */
 @Composable
 private fun HealthRow(
+    model: String,
     entry: HealthEntry?,
     hasSavedPin: Boolean,
     candidatePin: Boolean,
@@ -966,16 +1115,19 @@ private fun HealthRow(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.heightIn(min = 32.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp),
     ) {
         when (state) {
             HealthState.TESTING -> {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("Testing model…", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Testing ${model.ifBlank { "model" }}…",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             HealthState.WORKING -> {
                 Text(
-                    "✓ Working · ${EditorModel.latencySeconds(entry?.latencyMs ?: 0L)}",
+                    "${model.ifBlank { "Model" }} — ✓ Working · ${EditorModel.latencySeconds(entry?.latencyMs ?: 0L)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
@@ -983,10 +1135,12 @@ private fun HealthRow(
             }
             HealthState.FAILED -> {
                 Text(
-                    entry?.reason ?: "The model did not respond",
+                    "${model.ifBlank { "Model" }} — ${entry?.reason ?: "The model did not respond"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                TextButton(onClick = onRetest, modifier = Modifier.heightIn(min = 48.dp)) { Text("Retest") }
             }
             HealthState.UNTESTED, null -> {
                 when {

@@ -45,14 +45,15 @@ import androidx.compose.ui.unit.dp
 /**
  * Lite markdown: fenced code blocks (language chip, copy button, lightweight highlighting),
  * inline `code`, **bold**, "- " bullets, and #-headings as bold; [label](url) links and bare
- * URLs are tappable (agent-ux-p0-spec.md §1–3). Enough for chat output; no external
+ * URLs are tappable. This covers chat output without an external
  * dependency. Links open through the system handler — no WebView, no Custom Tabs dependency.
  */
 @Composable
-fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+fun MarkdownText(text: String, modifier: Modifier = Modifier, onFileLink: (String) -> Boolean = { false }) {
     val uriHandler = LocalUriHandler.current
+    val image = remember(text) { Regex("!\\[[^]]*]\\((data:image/[^)]+)\\)").find(text) }
     Column(modifier = modifier) {
-        val segments = splitFences(text)
+        val segments = splitFences(if (image == null) text else text.replace(image.value, ""))
         segments.forEach { segment ->
             if (segment is Segment.Code) {
                 CodeBlock(segment)
@@ -64,13 +65,14 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                 Text(
                     annotate((segment as Segment.Text).body, linkStyle) { url ->
                         // No browser installed must never crash a chat tap.
-                        runCatching { uriHandler.openUri(url) }
+                        if (!onFileLink(url)) runCatching { uriHandler.openUri(url) }
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
         }
+        image?.let { TranscriptImage(it.groupValues[1]) }
     }
 }
 

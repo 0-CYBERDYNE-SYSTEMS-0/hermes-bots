@@ -9,6 +9,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.json.JsonPrimitive
 
 class BotAdminTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -41,6 +42,51 @@ class BotAdminTest {
         val uiMeta = BotAdmin.mergeUiMeta(null, BotAdmin.UiMetaPatch(hidden = false))
         val p = BotAdmin.configureParams("alf", uiMeta = uiMeta, expectedRevisions = mapOf("hermes-bots" to 7))
         assertEquals(7, p["ui_meta_expected_revisions"]!!.jsonObject["hermes-bots"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test
+    fun `profile config params carry the bot profile`() {
+        val get = BotAdmin.configGetParams("approvals.mode", "scout")
+        assertEquals("approvals.mode", get["key"]!!.jsonPrimitive.content)
+        assertEquals("scout", get["profile"]!!.jsonPrimitive.content)
+
+        val set = BotAdmin.configSetParams("approvals.mode", JsonPrimitive("off"), "scout")
+        assertEquals("approvals.mode", set["key"]!!.jsonPrimitive.content)
+        assertEquals("off", set["value"]!!.jsonPrimitive.content)
+        assertEquals("scout", set["profile"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `prep config parser reads nested settings and allowlist`() {
+        val snapshot = json.parseToJsonElement(
+            """{"config":{"approvals":{"mode":"off","timeout":900},
+               "clarify":{"timeout":0},"command_allowlist":["git status","ls"]}}""",
+        ).jsonObject
+        val prep = BotAdmin.parsePrepConfig(snapshot)
+        assertEquals("off", prep.approvalMode)
+        assertEquals(900L, prep.approvalTimeoutSeconds)
+        assertEquals(0L, prep.clarifyTimeoutSeconds)
+        assertEquals(listOf("git status", "ls"), prep.commandAllowlist)
+    }
+
+    @Test
+    fun `prep config parser normalizes YAML false approval mode`() {
+        val snapshot = json.parseToJsonElement(
+            """{"config":{"approvals":{"mode":false}}}""",
+        ).jsonObject
+
+        assertEquals("off", BotAdmin.parsePrepConfig(snapshot).approvalMode)
+    }
+
+    @Test
+    fun `prep config parser rejects incomplete full responses`() {
+        val valueOnly = json.parseToJsonElement("""{"value":"smart"}""").jsonObject
+        val missingMode = json.parseToJsonElement("""{"config":{}}""").jsonObject
+        val nullMode = json.parseToJsonElement("""{"config":{"approvals":{"mode":null}}}""").jsonObject
+
+        assertTrue(runCatching { BotAdmin.parsePrepConfig(valueOnly) }.isFailure)
+        assertTrue(runCatching { BotAdmin.parsePrepConfig(missingMode) }.isFailure)
+        assertTrue(runCatching { BotAdmin.parsePrepConfig(nullMode) }.isFailure)
     }
 
     @Test

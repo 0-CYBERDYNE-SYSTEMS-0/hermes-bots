@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/** Designed empty moment (audit A7): centered avatar slot + title + instructive body + CTA. */
+/** Designed empty moment: centered avatar slot + title + instructive body + CTA. */
 @Composable
 fun EmptyState(
   title: String,

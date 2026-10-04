@@ -64,7 +64,7 @@ internal suspend fun HealthSink.recordEntry(
 /**
  * Pure decision helpers for [ModelVerifier] — unit-testable without sockets.
  *
- * Vocabulary (MODEL-UX-PUNCHLIST.md rev 2 / R2): a completion's `error_surface.code`
+ * A completion's `error_surface.code`
  * carries the FailoverReason set plus the hand-built runtime `agent_init_failed`
  * (`agent/error_surface.py:27-46,155`, `tui_gateway/methods_prompt.py:481-483`).
  */
@@ -97,7 +97,7 @@ internal object ModelVerifierLogic {
         return HealthEntry(state = state, checkedAtMs = nowMs, latencyMs = latencyMs, reason = reason)
     }
 
-    /** Timeout path (R5): a replayed completion classifies; otherwise an honest no-response failure. */
+    /** A replayed completion classifies; otherwise a timeout is an honest no-response failure. */
     fun fallbackEntry(events: List<GatewayEvent>, sessionId: String, nowMs: Long): HealthEntry {
         val ev = findCompletion(events, sessionId)
             ?: return HealthEntry(
@@ -109,7 +109,7 @@ internal object ModelVerifierLogic {
         return completionEntry(ev.payload, latencyMs = null, nowMs = nowMs)
     }
 
-    /** Connection loss mid-test is UNTESTED — never a verdict against the model (R5). */
+    /** Connection loss mid-test is inconclusive and does not count against the model. */
     fun droppedEntry(nowMs: Long): HealthEntry = HealthEntry(
         state = HealthState.UNTESTED,
         checkedAtMs = nowMs,
@@ -133,9 +133,9 @@ internal object ModelVerifierLogic {
 }
 
 /**
- * Verifies a bot's SAVED model pin end-to-end (MODEL-UX-PUNCHLIST.md W3 / P11, rev 2):
+ * Verifies a bot's saved model pin end-to-end:
  * ephemeral hidden session on the bot's profile → one short test turn → `message.complete`
- * → classify → [ModelHealthStore]. R1: never sends `model`/`provider` overrides —
+ * → classify → [ModelHealthStore]. Never sends `model`/`provider` overrides —
  * per-session overrides cannot resolve named-custom providers ("custom:clinepass"
  * live-fails `agent_init_failed` "Unknown provider") while config pins resolve, so the
  * only true test is against what the bot actually runs.
@@ -166,7 +166,8 @@ class ModelVerifier(
         health.markTesting(connectionId, provider, model)
         var testSid: String? = null
         try {
-            // R1: NO model/provider overrides here. Params per tui_gateway/methods_session.py:307-395.
+            // Follow the profile pin. A registry pin is also sent so a gateway that
+            // ignores the flag still tests this model. custom* pins stay profile-only.
             val created = try {
                 gateway.request(
                     Catalog.METHOD_SESSION_CREATE,
@@ -174,7 +175,16 @@ class ModelVerifier(
                         put("profile", profileSlug)
                         put("hidden", true)
                         put("close_on_disconnect", true)
+                        put("follow_profile_config", true)
                         put("title", "hv-$profileSlug-${System.currentTimeMillis()}")
+                        val pinProvider = provider?.trim().orEmpty()
+                        val pinModel = model?.trim().orEmpty()
+                        if (pinModel.isNotBlank() && pinProvider.isNotBlank() &&
+                            !pinProvider.lowercase().startsWith("custom")
+                        ) {
+                            put("model", pinModel)
+                            put("provider", pinProvider)
+                        }
                     },
                 )
             } catch (e: GatewayNotReadyException) {
@@ -188,7 +198,7 @@ class ModelVerifier(
                 ?: return record(connectionId, provider, model, ModelVerifierLogic.startFailureEntry(null, now()))
             return runTurn(gateway, connectionId, testSid, provider, model)
         } finally {
-            // R12: best-effort close (max_live_sessions: 16); close_on_disconnect above is
+            // Best-effort close (max_live_sessions: 16); close_on_disconnect above is
             // belt-and-braces for a socket that dies before we get here.
             testSid?.let { sid ->
                 runCatching {
@@ -206,12 +216,12 @@ class ModelVerifier(
      * the editor's "which ✓ providers actually work" check. Unlike [verify], this sends
      * per-session `model`/`provider` overrides, which resolve for REGISTRY providers
      * (anthropic, copilot, opencode-free, …) but never for named-custom ones
-     * ("custom:clinepass" live-fails `agent_init_failed` "Unknown provider" — R1), so
+     * Custom providers may fail as session overrides, so
      * callers must not invoke this for `custom*` slugs; those are proven via the
      * gateway's own pin / Same-as chips.
      *
-     * Outcome is recorded under model key "" (the provider-level entry) and, on success,
-     * duplicated under the winning model so model rows can show "verified".
+     * Outcome is recorded under the tested model key (so the editor can show it on
+     * that model only) and under model key "" (the provider-level entry).
      */
     suspend fun verifyCandidate(
         connectionId: String,
@@ -223,6 +233,7 @@ class ModelVerifier(
         }
         val gateway = manager.live.value[connectionId]?.gateway
             ?: throw IllegalStateException("connection not live")
+        health.markTesting(connectionId, provider, model)
         health.markTesting(connectionId, provider, "")
         var testSid: String? = null
         try {
@@ -238,19 +249,16 @@ class ModelVerifier(
                     },
                 )
             } catch (e: GatewayNotReadyException) {
-                return record(connectionId, provider, "", ModelVerifierLogic.droppedEntry(now()))
+                return recordBoth(connectionId, provider, model, ModelVerifierLogic.droppedEntry(now()))
             } catch (e: IOException) {
-                return record(connectionId, provider, "", ModelVerifierLogic.droppedEntry(now()))
+                return recordBoth(connectionId, provider, model, ModelVerifierLogic.droppedEntry(now()))
             } catch (e: RpcException) {
-                return record(connectionId, provider, "", ModelVerifierLogic.startFailureEntry(e.message, now()))
+                return recordBoth(connectionId, provider, model, ModelVerifierLogic.startFailureEntry(e.message, now()))
             }
             testSid = (created["session_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-                ?: return record(connectionId, provider, "", ModelVerifierLogic.startFailureEntry(null, now()))
-            val entry = runTurn(gateway, connectionId, testSid, provider, "")
-            if (entry.state == HealthState.WORKING) {
-                // Duplicate the win under the exact model so dropdown rows show "verified".
-                record(connectionId, provider, model, entry)
-            }
+                ?: return recordBoth(connectionId, provider, model, ModelVerifierLogic.startFailureEntry(null, now()))
+            val entry = runTurn(gateway, connectionId, testSid, provider, model)
+            record(connectionId, provider, "", entry)
             return entry
         } finally {
             testSid?.let { sid ->
@@ -280,7 +288,7 @@ class ModelVerifier(
                 .collect { ev -> completion.complete(ev) }
         }
         val entry = try {
-            // R5: the filtered collector MUST be subscribed before prompt.submit — events is
+            // Subscribe the filtered collector before prompt.submit — events is
             // SharedFlow(replay=0) and failed builds emit message.complete in <100 ms, so a
             // late subscriber never sees it. The 2 s cap just guarantees no hang; a missed
             // subscription is still covered by the since-replay fallback below.
@@ -297,7 +305,7 @@ class ModelVerifier(
                         buildJsonObject {
                             put("session_id", testSid)
                             put("text", ModelVerifierLogic.TEST_PROMPT)
-                            // R12 — exact spelling verified: display_kind is whitelisted to
+                            // display_kind is whitelisted to
                             // "hidden" (tui_gateway/methods_prompt.py:544-552).
                             put("display_kind", "hidden")
                         },
@@ -306,12 +314,12 @@ class ModelVerifier(
                     completion.await()
                 }
             } catch (e: TimeoutCancellationException) {
-                null // fall through to the since-replay fallback below (R5)
+                null // fall through to the since-replay fallback below
             }
             if (ev != null) {
                 ModelVerifierLogic.completionEntry(ev.payload, now() - startedAt, now())
             } else {
-                // Timeout → replay the session log before declaring failure (R5). A dropped
+                // Timeout → replay the session log before declaring failure. A dropped
                 // socket here propagates to the catch below → UNTESTED, never FAILED.
                 val catchUp = gateway.since(testSid, 0)
                 ModelVerifierLogic.fallbackEntry(catchUp.events, testSid, now())
@@ -337,6 +345,18 @@ class ModelVerifier(
         entry: HealthEntry,
     ): HealthEntry {
         health.recordEntry(connectionId, provider, model, entry)
+        return entry
+    }
+
+    /** Same verdict under the tested model and the provider-level key. */
+    private suspend fun recordBoth(
+        connectionId: String,
+        provider: String,
+        model: String,
+        entry: HealthEntry,
+    ): HealthEntry {
+        record(connectionId, provider, model, entry)
+        record(connectionId, provider, "", entry)
         return entry
     }
 }

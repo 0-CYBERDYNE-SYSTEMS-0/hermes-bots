@@ -22,7 +22,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** Gateway auth mode (DECISIONS.md #4: token AND basic; PROTOCOL.md §2). */
+/** Gateway auth mode (token or basic; PROTOCOL.md §2). */
 @Serializable
 sealed interface GatewayAuth {
     @Serializable
@@ -38,12 +38,19 @@ sealed interface GatewayAuth {
 data class GatewayProbe(
     val reachable: Boolean,
     val authRequired: Boolean? = null,
+    val authProviders: List<String> = emptyList(),
     val httpCode: Int = 0,
     val version: String? = null,
     val error: String? = null,
 ) {
     /** Token mode servers answer auth_required:false and accept ?token= on the upgrade. */
     val tokenMode: Boolean get() = reachable && authRequired == false
+
+    /** A gated gateway with no password provider requires browser/portal sign-in. */
+    val portalSignInRequired: Boolean
+        get() = authRequired == true &&
+            authProviders.isNotEmpty() &&
+            authProviders.none { it.equals("basic", ignoreCase = true) }
 }
 
 object Auth {
@@ -83,6 +90,9 @@ object Auth {
                             reachable = true,
                             authRequired = (obj["auth_required"] as? JsonPrimitive)
                                 ?.content?.toBooleanStrictOrNull(),
+                            authProviders = (obj["auth_providers"] as? JsonArray)
+                                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                                .orEmpty(),
                             httpCode = resp.code,
                             version = (obj["version"] as? JsonPrimitive)
                                 ?.takeIf { it.isString }?.content,

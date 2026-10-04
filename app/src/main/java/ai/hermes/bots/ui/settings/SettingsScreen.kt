@@ -80,7 +80,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val notificationsEnabled: StateFlow<Boolean> = settings.notificationsEnabled
     val notificationHistory: StateFlow<List<NotificationEntry>> = settings.notificationHistory
 
-    // Roster + avatars for display-time notification resolution (V3): recorded labels can
+    // Roster + avatars for display-time notification resolution: recorded labels can
     // carry the app-name fallback; resolve against known bots without re-writing history.
     val roster: StateFlow<List<RosterEntry>> = graph.roster.roster
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -100,12 +100,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settings.clearNotifications() }
     }
 
-    /** Fleet config export (B1c): every connection, secrets included per spec. */
+    /** Fleet config export includes every connection and its credentials. */
     suspend fun exportJson(): String = withContext(Dispatchers.IO) {
         ai.hermes.bots.data.FleetConfigCodec.export(graph.connections.connections.first())
     }
 
-    /** Fleet config import (B1c): merge by normalized URL; returns "Added N, skipped M". */
+    /** Fleet config import merges by normalized URL; returns "Added N, skipped M". */
     suspend fun importJson(text: String): Result<String> = withContext(Dispatchers.IO) {
         try {
             val result = graph.provisioning.importRecords(text)

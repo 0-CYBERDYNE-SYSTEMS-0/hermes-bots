@@ -33,17 +33,33 @@ import java.util.concurrent.atomic.AtomicReference
 private const val READY_FRAME =
     """{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{"replay_epoch":"epoch-1"}}}"""
 
+private fun stringIdOf(text: String): String =
+    """"id":"([^"]+)""".toRegex().find(text)!!.groupValues[1]
+
 private class RpcServer(
     private val wsRef: AtomicReference<WebSocket?>,
+    private val capabilityHandler: (String) -> List<String> = { text ->
+        listOf(
+            """{"jsonrpc":"2.0","id":"${stringIdOf(text)}","result":{"server_requests":["approval","clarify","secret","sudo"]}}""",
+        )
+    },
     private val onMessageHandler: (String) -> List<String>,
 ) : WebSocketListener() {
+    val received = ConcurrentLinkedQueue<String>()
+
     override fun onOpen(ws: WebSocket, response: Response) {
         wsRef.set(ws)
         ws.send(READY_FRAME)
     }
 
     override fun onMessage(ws: WebSocket, text: String) {
-        onMessageHandler(text).forEach { ws.send(it) }
+        received.add(text)
+        val responses = if (text.contains("\"method\":\"client.capabilities\"")) {
+            capabilityHandler(text)
+        } else {
+            onMessageHandler(text)
+        }
+        responses.forEach { ws.send(it) }
     }
 }
 
@@ -110,6 +126,62 @@ class HermesGatewayTest {
 
     private fun push(sid: String, seq: Long, type: String): String =
         """{"jsonrpc":"2.0","method":"event","params":{"type":"$type","session_id":"$sid","seq":$seq,"payload":{"text":"x"}}}"""
+
+    @Test
+    fun `capability registration precedes api calls and legacy method-not-found is tolerated`() {
+        val rpc = RpcServer(
+            wsRef,
+            onMessageHandler = { text -> listOf(resp(idOf(text))) },
+            capabilityHandler = { text ->
+                listOf(
+                    """{"jsonrpc":"2.0","id":"${stringIdOf(text)}","error":{"code":-32601,"message":"unknown method"}}""",
+                )
+            },
+        )
+        server.enqueue(MockResponse().withWebSocketUpgrade(rpc))
+        awaitReady()
+
+        val result = runBlocking { gateway.request("profiles.list", JsonObject(emptyMap())) }
+        assertEquals("1", result["echo"]!!.jsonPrimitive.content)
+        until { rpc.received.size >= 2 }
+
+        val frames = rpc.received.toList()
+        assertTrue(frames[0].contains("\"method\":\"client.capabilities\""))
+        assertTrue(frames[0].contains("\"params\":{\"server_requests\":true}"))
+        assertTrue(frames[1].contains("\"method\":\"profiles.list\""))
+    }
+
+    @Test
+    fun `capability registration repeats for each physical connection`() {
+        val first = RpcServer(wsRef) { emptyList() }
+        val second = RpcServer(wsRef) { emptyList() }
+        server.enqueue(MockResponse().withWebSocketUpgrade(first))
+        server.enqueue(MockResponse().withWebSocketUpgrade(second))
+        awaitReady()
+        until { first.received.size == 1 }
+
+        wsRef.get()!!.close(1001, "server restart")
+        until { second.received.size == 1 }
+
+        assertTrue(first.received.single().contains("\"method\":\"client.capabilities\""))
+        assertTrue(second.received.single().contains("\"method\":\"client.capabilities\""))
+    }
+
+    @Test
+    fun `unknown server request is rejected with method-not-found`() {
+        val rpc = RpcServer(wsRef) { emptyList() }
+        server.enqueue(MockResponse().withWebSocketUpgrade(rpc))
+        awaitReady()
+
+        wsRef.get()!!.send(
+            """{"jsonrpc":"2.0","id":"srq-unknown","method":"unsupported.prompt","params":{}}""",
+        )
+        until { rpc.received.any { it.contains("\"id\":\"srq-unknown\"") && it.contains("\"error\"") } }
+
+        val response = rpc.received.first { it.contains("\"id\":\"srq-unknown\"") }
+        assertTrue(response.contains("\"code\":-32601"))
+        assertTrue(response.contains("\"message\":\"Method not found\""))
+    }
 
     @Test
     fun `blocking server request is re-emitted as a legacy event and answered with a result frame`() {

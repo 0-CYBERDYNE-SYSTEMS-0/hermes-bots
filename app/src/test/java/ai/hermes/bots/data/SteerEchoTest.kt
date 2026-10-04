@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Steer echo insertion (incident 2026-09-16: steered text never appeared in the transcript). */
+/** Steered text appears in the transcript after insertion. */
 class SteerEchoTest {
 
   @Test

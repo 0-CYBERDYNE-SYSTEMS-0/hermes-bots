@@ -8,7 +8,7 @@ import ai.hermes.bots.ui.util.Humanize
 import java.util.Locale
 
 /**
- * Pure section builders for the Activity screen (UI-SPEC.md §4.6). No Compose, no
+ * Pure section builders for the Activity screen. No Compose, no
  * repositories — repositories push raw data in, display-ready rows come out. Unit-tested
  * in ActivitySectionsTest.
  */

@@ -6,7 +6,7 @@ makes the bot call message_agent toward a peer on another gateway, and records
 every protocol event until the turn settles. Run one round:
 
   uv run --with websockets python scripts/verify-two-way.py \
-      --url http://127.0.0.1:9119 --token dev-token-9119 \
+       --url http://127.0.0.1:9119 --token '<token printed by dev-gateways.sh>' \
       --profile scout --say '...' --mark A1
 
 Event frames follow PROTOCOL.md §3: {"method":"event","params":{type,session_id,seq,payload}}.

@@ -34,6 +34,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
@@ -42,6 +43,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,11 +59,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Warning
@@ -73,9 +76,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -98,10 +103,14 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -114,23 +123,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.viewModelFactory
-import android.util.Log
-import android.annotation.SuppressLint
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
-
-
-/**
- * D1DBG scroll diagnostics: zero cost unless enabled via
- * `adb shell setprop log.tag.D1DBG DEBUG`. Inline + lambda keeps string building lazy;
- * one suppression for lint's isLoggable/Log.d tag false positive (identical literals).
- */
-@SuppressLint("LogTagMismatch")
-private inline fun d1dbg(message: () -> String) {
-    if (Log.isLoggable("D1DBG", Log.DEBUG)) Log.d("D1DBG", message())
-}
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -158,20 +154,28 @@ fun ChatScreen(
     val presence by vm.presence.collectAsState()
     val gatewayLabel by vm.gatewayLabel.collectAsState()
     val bubbleMode by vm.bubbleMode.collectAsState()
-    var draft by remember { mutableStateOf("") }
+    var draft by rememberSaveable(connectionId, botName) { mutableStateOf("") }
+    var composerHeightPx by remember(connectionId, botName) { mutableStateOf(0) }
+    var errorBannerHeightPx by remember(connectionId, botName) { mutableStateOf(0) }
+    var todoHeightPx by remember(connectionId, botName) { mutableStateOf(0) }
+    var workingStatusHeightPx by remember(connectionId, botName) { mutableStateOf(0) }
+    var showCommandHelp by rememberSaveable { mutableStateOf(false) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.attachImageFromUri(uri)
     }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.attachFileFromUri(uri)
+    }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val listState = rememberLazyListState()
-    // D4: blank assistant items (message.start anchors that never received text, history
+    // Blank assistant items (message.start anchors that never received text, history
     // assistant turns that only carried tool calls) and fully blank tool items render as
     // invisible pills — desktop shows nothing for them, so neither do we. Bubble Mode drops
     // even streaming-blank bot bubbles: the typing bubble stands in while nothing is visible.
     val visibleItems = remember(ui.items, bubbleMode) { ui.items.filter { if (bubbleMode) it.bubbleVisible else it.docVisible } }
     val rows = remember(visibleItems, itemTimes) { Transcript.build(visibleItems, itemTimes) }
     val bubbleRows = remember(visibleItems, itemTimes) { buildBubbleListRows(visibleItems, itemTimes) }
-    // §4.2 rev: while the turn is streaming with no visible text yet, a typing bubble stands in.
+    // While the turn is streaming with no visible text yet, a typing bubble stands in.
     val showTyping = bubbleMode && ui.streaming && !streamingTextVisible(visibleItems)
     val lastIndex = if (bubbleMode) {
         (bubbleRows.size - 1 + if (showTyping) 1 else 0).coerceAtLeast(0)
@@ -182,13 +186,11 @@ fun ChatScreen(
     // Stick to the bottom ONLY while the reader is there. Scrolling up to reread history
     // must never be hijacked by the next streamed chunk — a jump pill offers the way back.
     //
-    // D1: `wasAtBottom` snapshots the scroll state as of the latest SCROLL movement, and only
-    // scroll movements can flip it. Appending rows never moves the scroll position, so when
-    // the size-keyed effect below runs, this flag still answers "was the reader at the bottom
-    // BEFORE the content grew?" (a derivedStateOf over live layoutInfo measures after the
-    // count already grew and misreads a bottom-parked reader as scrolled away).
+    // `wasAtBottom` records the reader's position before content grows. Reading live layout
+    // info here would measure after rows were appended and could mistake a reader at the bottom
+    // for one who had scrolled away.
     //
-    // D1-tall: "at the end" means the viewport is scrolled to max OR the last row's BOTTOM
+    // "At the end" means the viewport is scrolled to max or the last row's BOTTOM
     // edge is on screen — full visibility must NOT be required, because a row taller than
     // the viewport is never fully visible, yet docking its bottom still counts as at-bottom.
     // The only thing that can flip the flag false is the scroll position moving toward the
@@ -212,13 +214,6 @@ fun ChatScreen(
                 scrolledUp -> false
                 else -> wasAtBottom
             }
-            // PERF (QA S1): this runs per scroll frame — never build the log string unless
-            // the tag is enabled (`adb shell setprop log.tag.D1DBG DEBUG`).
-            d1dbg {
-                "collect snap=$snap atEndNow=$atEndNow scrolledUp=$scrolledUp " +
-                    "canFwd=${listState.canScrollForward} last=${last?.let { "${it.index}:${it.offset}+${it.size} vs ve=${info.viewportEndOffset}" }} " +
-                    "total=${info.totalItemsCount} -> wasAtBottom=$wasAtBottom"
-            }
             prevScrollPos = snap
         }
     }
@@ -234,19 +229,9 @@ fun ChatScreen(
         }
     }
     LaunchedEffect(wasAtBottom) { if (wasAtBottom) userScrolledUp = false }
-    // PERF (QA S1) D1 autoscroll, split in two: content growth (rows / typing bubble) keeps
-    // the animated dock exactly as before; status pushes re-pin INSTANTLY instead. The old
-    // combined effect re-ran the animated dock on every status push — mid-turn that meant an
-    // animation per push re-dispatching layout (ANR fuel). The status strip's enter/exit is
-    // still honored: one instant dock when it flips, plus a settle re-dock after its 200 ms
-    // animation finishes, so the tail row's bottom edge stays visible (D1 / D1-tall) and the
-    // reader-gate (wasAtBottom) is checked exactly as before — scrolled-up readers are never
-    // re-anchored.
+    // Keep content-growth scrolling separate from status updates. Status changes re-pin
+    // immediately and once after the strip's animation settles; scrolled-up readers stay put.
     LaunchedEffect(rows.size, bubbleRows.size, showTyping) {
-        d1dbg {
-            "grow rows=${rows.size} bubble=${bubbleRows.size} typing=$showTyping " +
-                "lastIndex=$lastIndex wasAtBottom=$wasAtBottom jumped=$jumpedToLatest"
-        }
         if (rows.isEmpty() && !showTyping) return@LaunchedEffect
         if (!jumpedToLatest) {
             jumpedToLatest = true
@@ -259,7 +244,6 @@ fun ChatScreen(
     LaunchedEffect(ui.statusText) {
         if (rows.isEmpty() && !showTyping) return@LaunchedEffect
         if (!jumpedToLatest || !wasAtBottom) return@LaunchedEffect
-        d1dbg { "status=${ui.statusText != null} lastIndex=$lastIndex wasAtBottom=$wasAtBottom" }
         listState.dockToLatest(lastIndex, animated = false)
         delay(240) // strip expand/collapse runs 200 ms; re-check once it has settled
         if (!wasAtBottom) return@LaunchedEffect
@@ -286,13 +270,15 @@ fun ChatScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 Text(botName)
-                                // B4: quiet gateway chip when this name exists on other gateways.
+                                // Show the gateway when this name exists on other connections.
                                 gatewayLabel?.let { ai.hermes.bots.ui.components.ConnectionChip(it) }
                             }
-                            val subtitle = listOfNotNull(
-                                presence,
-                                ai.hermes.bots.ui.util.Humanize.model(ui.botModel),
-                            ).joinToString(" · ")
+                            val running = when {
+                                !ui.botProvider.isNullOrBlank() && !ui.botModel.isNullOrBlank() ->
+                                    "${ui.botProvider} / ${ui.botModel}"
+                                else -> "model not confirmed"
+                            }
+                            val subtitle = listOfNotNull(presence, running).joinToString(" · ")
                             if (subtitle.isNotEmpty()) {
                                 Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -319,6 +305,10 @@ fun ChatScreen(
                             trailingIcon = { Checkbox(checked = bubbleMode, onCheckedChange = null) },
                         )
                         DropdownMenuItem(
+                            text = { Text("Slash commands") },
+                            onClick = { headerMenu = false; showCommandHelp = true },
+                        )
+                        DropdownMenuItem(
                             text = { Text("Routines") },
                             onClick = { headerMenu = false; onOpenRoutines() },
                         )
@@ -331,267 +321,474 @@ fun ChatScreen(
             )
         },
     ) { padding ->
-        Column(
+        BoxWithConstraints(
             Modifier.fillMaxSize().padding(padding).imePadding().padding(horizontal = Dimens.GutterChat),
         ) {
-            ui.error?.let { err ->
-                val last = ui.items.lastOrNull()
-                val alreadyInline = last?.kind == ItemKind.ERROR && last.text == err
-                if (!alreadyInline) {
-                    // Incident 2026-09-16: the banner cleared only on a successful send —
-                    // now dismissible like every other line.
-                    ai.hermes.bots.ui.components.ErrorLine(
-                        raw = err,
-                        botName = botName,
-                        onDismiss = { vm.dismissError() },
-                    )
-                }
+            val last = ui.items.lastOrNull()
+            val showErrorBanner = ui.error != null && !(last?.kind == ItemKind.ERROR && last.text == ui.error)
+            val density = LocalDensity.current
+            val composerHeight = with(density) { composerHeightPx.toDp() }
+                .takeIf { it > 0.dp } ?: 96.dp
+            val errorBannerHeight = with(density) {
+                if (showErrorBanner) errorBannerHeightPx.toDp() else 0.dp
             }
-            if (ui.loading) {
-                Column(
-                    Modifier.fillMaxWidth().weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    CircularProgressIndicator()
-                    Text(
-                        "Opening Bot Chat…",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-            } else {
-                Box(Modifier.weight(1f)) {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = if (ui.approval != null) 140.dp else 8.dp),
+            val workingStatusHeight = with(density) {
+                if (ui.streaming && ui.statusText != null) workingStatusHeightPx.toDp() else 0.dp
+            }
+            val todoMaxHeight = (maxHeight - composerHeight - errorBannerHeight - workingStatusHeight)
+                .coerceAtLeast(0.dp)
+                .coerceAtMost(180.dp)
+            val aboveTransientHeight = errorBannerHeight +
+                with(density) {
+                    if (ui.todo.isNotEmpty()) todoHeightPx.toDp() else 0.dp
+                } + workingStatusHeight
+            val transientMaxHeight = (maxHeight - composerHeight - aboveTransientHeight)
+                .coerceAtLeast(0.dp)
+                .coerceAtMost(220.dp)
+            Column(Modifier.fillMaxSize()) {
+                if (showErrorBanner) {
+                    // Keep connection and gateway errors dismissible without requiring a send.
+                    Box(
+                        Modifier.fillMaxWidth().onSizeChanged { errorBannerHeightPx = it.height },
                     ) {
-                        if (rows.isEmpty()) {
-                            item(key = "empty") {
-                                ai.hermes.bots.ui.components.EmptyState(
-                                    title = "Say hi to $botName",
-                                    body = "This conversation lives here forever — anything $botName does lands in it.",
-                                    avatar = {
-                                        ai.hermes.bots.ui.components.FaceAvatar(
-                                            botName,
-                                            72.dp,
-                                            real = avatars["$connectionId:$botName"],
-                                        )
-                                    },
-                                )
+                        ai.hermes.bots.ui.components.ErrorLine(
+                            raw = ui.error.orEmpty(),
+                            botName = botName,
+                            onDismiss = { vm.dismissError() },
+                        )
+                    }
+                }
+                if (ui.loading) {
+                    Column(
+                        Modifier.fillMaxWidth().weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator()
+                        Text(
+                            "Opening Bot Chat…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                } else {
+                    Box(Modifier.weight(1f)) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = if (ui.approval != null) 140.dp else 8.dp),
+                        ) {
+                            if (rows.isEmpty()) {
+                                item(key = "empty") {
+                                    ai.hermes.bots.ui.components.EmptyState(
+                                        title = "Say hi to $botName",
+                                        body = "This conversation lives here forever — anything $botName does lands in it.",
+                                        avatar = {
+                                            ai.hermes.bots.ui.components.FaceAvatar(
+                                                botName,
+                                                72.dp,
+                                                real = avatars["$connectionId:$botName"],
+                                            )
+                                        },
+                                    )
+                                }
                             }
-                        }
-                        val displayCount = if (bubbleMode) bubbleRows.size else rows.size
-                        items(count = displayCount, key = { idx ->
-                            if (bubbleMode) bubbleRows[idx].key else rows[idx].key
-                        }) { idx ->
-                            androidx.compose.foundation.layout.Box(Modifier.animateItem()) {
-                                if (bubbleMode) {
-                                    when (val row = bubbleRows[idx]) {
-                                        is BubbleListRow.TimeSeparator -> TimeSeparatorRow(row.label)
-                                        is BubbleListRow.Group -> when (val bubble = row.row) {
-                                            is BubbleRow.User -> BubbleUserView(bubble.item)
-                                            is BubbleRow.Bot -> BubbleBotView(bubble.item, botName)
-                                            is BubbleRow.Work -> BubbleWorkGroup(bubble.items)
-                                            is BubbleRow.Always -> BubbleAlwaysView(
-                                                bubble.item,
+                            val displayCount = if (bubbleMode) bubbleRows.size else rows.size
+                            items(count = displayCount, key = { idx ->
+                                if (bubbleMode) bubbleRows[idx].key else rows[idx].key
+                            }) { idx ->
+                                androidx.compose.foundation.layout.Box(Modifier.animateItem()) {
+                                    if (bubbleMode) {
+                                        when (val row = bubbleRows[idx]) {
+                                            is BubbleListRow.TimeSeparator -> TimeSeparatorRow(row.label)
+                                            is BubbleListRow.Group -> when (val bubble = row.row) {
+                                                is BubbleRow.User -> BubbleUserView(bubble.item)
+                                                is BubbleRow.Bot -> BubbleBotView(bubble.item, botName, vm::openFileLink)
+                                                is BubbleRow.Work -> BubbleWorkGroup(bubble.items)
+                                                is BubbleRow.Always -> BubbleAlwaysView(
+                                                    bubble.item,
+                                                    botName,
+                                                    onDismissItem = vm::dismissItem,
+                                                    onInterruptStall = vm::interrupt,
+                                                    onFileLink = vm::openFileLink,
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        when (val row = rows[idx]) {
+                                            is TranscriptRow.Message -> ChatItemView(
+                                                row.item,
                                                 botName,
                                                 onDismissItem = vm::dismissItem,
                                                 onInterruptStall = vm::interrupt,
+                                                onFileLink = vm::openFileLink,
                                             )
+                                            is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
                                         }
-                                    }
-                                } else {
-                                    when (val row = rows[idx]) {
-                                        is TranscriptRow.Message -> ChatItemView(
-                                            row.item,
-                                            botName,
-                                            onDismissItem = vm::dismissItem,
-                                            onInterruptStall = vm::interrupt,
-                                        )
-                                        is TranscriptRow.TimeSeparator -> TimeSeparatorRow(row.label)
                                     }
                                 }
                             }
+                            if (bubbleMode && showTyping) {
+                                item(key = "typing") { TypingBubble() }
+                            }
                         }
-                        if (bubbleMode && showTyping) {
-                            item(key = "typing") { TypingBubble() }
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = showJump,
+                            enter = fadeIn(tween(150)) + androidx.compose.animation.scaleIn(tween(150)),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 4.dp, bottom = 12.dp),
+                        ) {
+                            val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                shadowElevation = 3.dp,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        userScrolledUp = false
+                                        scope?.launch { listState.animateScrollToItem(lastIndex) }
+                                    },
+                            ) {
+                                Icon(
+                                    Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = "Jump to latest",
+                                    modifier = Modifier.padding(8.dp).size(24.dp),
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
                         }
                     }
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = showJump,
-                        enter = fadeIn(tween(150)) + androidx.compose.animation.scaleIn(tween(150)),
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 4.dp, bottom = 12.dp),
+                }
+                // The plan checklist stays above the working strip until the next todo.updated
+                // event and can be collapsed so it never traps the transcript.
+                if (ui.todo.isNotEmpty()) {
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .onSizeChanged { todoHeightPx = it.height }
+                            .heightIn(max = todoMaxHeight)
+                            .verticalScroll(rememberScrollState()),
                     ) {
-                        val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            shadowElevation = 3.dp,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable {
-                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    userScrolledUp = false
-                                    scope?.launch { listState.animateScrollToItem(lastIndex) }
+                        TodoCard(ui.todo)
+                    }
+                }
+                // Gated on streaming too: the VM clears statusText on
+                // complete/error/stall/interrupt, and this gate guarantees the "Working —"
+                // strip can never outlive a live turn even if an event arrives out of order.
+                AnimatedVisibility(
+                    visible = ui.streaming && ui.statusText != null,
+                    modifier = Modifier.fillMaxWidth().onSizeChanged { workingStatusHeightPx = it.height },
+                    enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
+                    exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
+                ) {
+                    ui.statusText?.let {
+                        WorkingStatus(
+                            botName = botName,
+                            status = it,
+                            avatar = avatars["$connectionId:$botName"],
+                        )
+                    }
+                }
+                // ApprovalPinPolicy owns the lifetime: an active card always shows; a resolved
+                // card stays until the user clears it (X on the card); an expired card lingers
+                // EXPIRED_LINGER_MS so the state is seen, then auto-dismisses. A fresh
+                // approval resets dismissal, which is what lets it replace the pinned card.
+                var lastApproval by remember { mutableStateOf<ApprovalCard?>(null) }
+                var approvalDismissed by remember { mutableStateOf(false) }
+                LaunchedEffect(ui.approval) {
+                    if (ui.approval != null) {
+                        lastApproval = ui.approval
+                        approvalDismissed = false
+                    }
+                }
+                LaunchedEffect(ui.approvalExpired) {
+                    if (ui.approvalExpired) {
+                        delay(ApprovalPinPolicy.EXPIRED_LINGER_MS)
+                        approvalDismissed = true
+                    }
+                }
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = transientMaxHeight).verticalScroll(rememberScrollState()),
+                ) {
+                    val pinnedCard = ui.approval ?: lastApproval
+                    val showApproval = ApprovalPinPolicy.visible(
+                        hasCard = pinnedCard != null,
+                        active = ui.approval != null,
+                        resolved = ui.approvalResolved,
+                        expired = ui.approvalExpired,
+                        dismissed = approvalDismissed,
+                    )
+                    AnimatedVisibility(
+                        visible = showApproval,
+                        enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
+                        exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
+                    ) {
+                        if (pinnedCard != null) {
+                            ApprovalCardView(
+                                pinnedCard,
+                                ui.approvalResolved,
+                                ui.approvalExpired,
+                                onRespond = { vm.respond(it) },
+                                onRespondBatch = { answers -> vm.respond("", answers) },
+                                onSkip = if (
+                                    canSend &&
+                                    ui.approval != null &&
+                                    ui.approval?.kind == Catalog.EVENT_CLARIFY_REQUEST &&
+                                    ui.approval?.choices?.isEmpty() == true &&
+                                    ui.approvalResolved == null &&
+                                    !ui.approvalExpired
+                                ) {
+                                    vm::skipClarify
+                                } else {
+                                    null
                                 },
-                        ) {
-                            Icon(
-                                Icons.Filled.KeyboardArrowDown,
-                                contentDescription = "Jump to latest",
-                                modifier = Modifier.padding(8.dp).size(24.dp),
-                                tint = MaterialTheme.colorScheme.onSurface,
+                                // X once the card is no longer the live question — or when the
+                                // The session is down and the card cannot be acted on.
+                                onDismiss = if (ui.approval == null || !canSend) ({ approvalDismissed = true }) else null,
                             )
                         }
                     }
-                }
-            }
-            // Agent-ux P0 (spec §5): the live plan checklist. Sits above the working strip
-            // and survives until the next todo.updated replaces it (desktop plan-anchor
-            // behavior); user-collapsible so it never traps the transcript.
-            if (ui.todo.isNotEmpty()) {
-                TodoCard(ui.todo)
-            }
-            // Gated on streaming too (incident 2026-09-16): the VM clears statusText on
-            // complete/error/stall/interrupt, and this gate guarantees the "Working —"
-            // strip can never outlive a live turn even if an event arrives out of order.
-            AnimatedVisibility(
-                visible = ui.streaming && ui.statusText != null,
-                enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
-                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
-            ) {
-                ui.statusText?.let {
-                    WorkingStatus(
-                        botName = botName,
-                        status = it,
-                        avatar = avatars["$connectionId:$botName"],
-                    )
-                }
-            }
-            // Incident 2026-09-16: resolved/expired cards used to stay pinned forever.
-            // ApprovalPinPolicy owns the lifetime: an active card always shows; a resolved
-            // card stays until the user clears it (X on the card); an expired card lingers
-            // EXPIRED_LINGER_MS so the state is seen, then auto-dismisses. A fresh
-            // approval resets dismissal, which is what lets it replace the pinned card.
-            var lastApproval by remember { mutableStateOf<ApprovalCard?>(null) }
-            var approvalDismissed by remember { mutableStateOf(false) }
-            LaunchedEffect(ui.approval) {
-                if (ui.approval != null) {
-                    lastApproval = ui.approval
-                    approvalDismissed = false
-                }
-            }
-            LaunchedEffect(ui.approvalExpired) {
-                if (ui.approvalExpired) {
-                    delay(ApprovalPinPolicy.EXPIRED_LINGER_MS)
-                    approvalDismissed = true
-                }
-            }
-            val pinnedCard = ui.approval ?: lastApproval
-            val showApproval = ApprovalPinPolicy.visible(
-                hasCard = pinnedCard != null,
-                active = ui.approval != null,
-                resolved = ui.approvalResolved,
-                expired = ui.approvalExpired,
-                dismissed = approvalDismissed,
-            )
-            AnimatedVisibility(
-                visible = showApproval,
-                enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
-                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200)),
-            ) {
-                if (pinnedCard != null) {
-                    ApprovalCardView(
-                        pinnedCard,
-                        ui.approvalResolved,
-                        ui.approvalExpired,
-                        onRespond = vm::respond,
-                        onSkip = if (
-                            canSend &&
-                            ui.approval != null &&
-                            ui.approval?.kind == Catalog.EVENT_CLARIFY_REQUEST &&
-                            ui.approval?.choices?.isEmpty() == true &&
-                            ui.approvalResolved == null &&
-                            !ui.approvalExpired
-                        ) {
-                            vm::skipClarify
-                        } else {
-                            null
-                        },
-                        // X once the card is no longer the live question — or when the
-                        // session is down and the card can't be acted on at all (QA
-                        // 2026-09-19: pinned card + "Waiting for the gateway…" left the
-                        // user with no answer field and no close).
-                        onDismiss = if (ui.approval == null || !canSend) ({ approvalDismissed = true }) else null,
-                    )
-                }
-            }
-            if (canSend) {
-                ChatComposer(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    placeholder = when {
-                        ui.streaming -> "Steer the running turn…"
-                        // QA 2026-09-19: a choice-less Question parks the turn — this field
-                        // IS the answer (send unblocks the parked turn first).
-                        ui.approval?.kind == Catalog.EVENT_CLARIFY_REQUEST && ui.approval?.choices?.isEmpty() == true ->
-                            "Type your answer…"
-                        else -> "Message $botName"
-                    },
-                    streaming = ui.streaming,
-                    pendingImage = ui.pendingImage?.filename,
-                    onAttachImage = {
-                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    },
-                    onRemoveImage = { vm.clearPendingImage() },
-                    onSend = {
-                        tick()
-                        userScrolledUp = false // the sender wants eyes on the new round
-                        // Belt-and-braces: during a running turn the trailing button is
-                        // stop/steer only, and prompt.submit on a busy session would just
-                        // draw RPC 4091 — never send here.
-                        if (!ui.streaming) {
-                            vm.send(draft)
-                            draft = ""
+                    if (ui.runLines.isNotEmpty()) {
+                        Text("Run", style = MaterialTheme.typography.labelMedium)
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            ui.runLines.takeLast(8).forEach { line ->
+                                Text(line, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
                         }
-                    },
-                    onSteer = {
-                        tick()
-                        userScrolledUp = false
-                        vm.steer(draft.trim())
-                        draft = ""
-                    },
-                    onInterrupt = {
-                        tick()
-                        vm.interrupt()
-                    },
-                    modifier = Modifier.padding(vertical = 6.dp),
-                )
-            } else if (!ui.loading) {
-                // SV-01: the session never opened — typing here would go nowhere, so the
-                // composer is replaced by a quiet hint and a way back in.
-                Column(
-                    Modifier.padding(vertical = 6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Surface(
-                        shape = MaterialTheme.shapes.extraLarge,
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        modifier = Modifier.fillMaxWidth().alpha(0.6f),
-                    ) {
-                        Text(
-                            "Waiting for the gateway…",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                    }
+                    ui.commandRunning?.let { command ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(
+                                "Running $command on this bot's gateway…",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    ui.commandFeedback?.let { feedback ->
+                        CommandFeedbackCard(
+                            text = feedback,
+                            failed = ui.commandFeedbackIsError,
+                            onDismiss = vm::dismissCommandFeedback,
                         )
                     }
-                    TextButton(onClick = { vm.retry() }) { Text("Try again") }
+                    if (ui.sending) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(
+                                "Sending to gateway…",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (canSend) {
+                        TextButton(
+                            onClick = { filePicker.launch(arrayOf("*/*")) },
+                            enabled = ui.commandRunning == null && !ui.sending,
+                        ) { Text("Attach document") }
+                        ui.pendingFile?.let { file ->
+                            TextButton(onClick = vm::clearPendingFile, enabled = !ui.sending) {
+                                Text("${file.filename}  ×")
+                            }
+                        }
+                    }
                 }
+                if (canSend) {
+                    ChatComposer(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        placeholder = when {
+                            ui.streaming -> "Steer the running turn…"
+                            // A choice-less Question parks the turn; the composer is its answer field.
+                            ui.approval?.kind == Catalog.EVENT_CLARIFY_REQUEST && ui.approval?.choices?.isEmpty() == true ->
+                                "Type your answer…"
+                            else -> "Message $botName"
+                        },
+                        streaming = ui.streaming,
+                        commandRunning = ui.commandRunning != null || ui.sending,
+                        pendingImage = ui.pendingImage?.filename,
+                        pendingFile = ui.pendingFile?.filename,
+                        onAttachImage = {
+                            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
+                        onRemoveImage = { vm.clearPendingImage() },
+                        onSend = {
+                            tick()
+                            userScrolledUp = false // the sender wants eyes on the new round
+                            // Belt-and-braces: during a running turn the trailing button is
+                            // stop/steer only, and prompt.submit on a busy session would just
+                            // draw RPC 4091 — never send here.
+                            if (!ui.streaming && !ui.sending) {
+                                vm.send(
+                                    draft,
+                                    onAccepted = { draft = "" },
+                                    onPrefill = { draft = it },
+                                )
+                            }
+                        },
+                        onSteer = {
+                            tick()
+                            userScrolledUp = false
+                            vm.steer(draft.trim())
+                            draft = ""
+                        },
+                        onInterrupt = {
+                            tick()
+                            vm.interrupt()
+                        },
+                        modifier = Modifier.onSizeChanged {
+                            if (composerHeightPx != it.height) composerHeightPx = it.height
+                        }.padding(vertical = 6.dp),
+                    )
+                } else if (!ui.loading && !ui.modelReady && ui.error == null) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text(
+                            if (ui.modelSwitchDeferred) "Waiting for current turn…" else "Checking live model…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                } else if (!ui.loading) {
+                    // SV-01: the session never opened — typing here would go nowhere, so the
+                    // composer is replaced by a quiet hint and a way back in.
+                    Column(
+                        Modifier.padding(vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Surface(
+                            shape = MaterialTheme.shapes.extraLarge,
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.fillMaxWidth().alpha(0.6f),
+                        ) {
+                            Text(
+                                "Waiting for the gateway…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                            )
+                        }
+                        TextButton(onClick = { vm.retry() }) { Text("Try again") }
+                    }
+                }
+            }
+        }
+    }
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    if (showCommandHelp) {
+        AlertDialog(
+            onDismissRequest = { showCommandHelp = false },
+            title = { Text("Slash commands") },
+            text = {
+                Column(
+                    Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("Commands run on the gateway that owns this bot.")
+                    Text("/compress [topic]  — compact this conversation, optionally focused on a topic.")
+                    Text("/compact [topic]  — alias for /compress.")
+                    Text("Add --preview, --dry-run, or --dryrun to preview compression without applying it.")
+                    Text("/new  — compress the canonical bot chat to start a fresh context; the bot chat stays the same.")
+                    Text("Other installed gateway commands are forwarded when supported.")
+                    Text(
+                        if (draft.isBlank()) "Your current draft is empty; you can insert /compress."
+                        else "Your current draft will be kept. Copy /compress, then paste it when you're ready.",
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (draft.isBlank()) {
+                            draft = "/compress "
+                        } else {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("/compress "))
+                        }
+                        showCommandHelp = false
+                    },
+                ) { Text(if (draft.isBlank()) "Insert /compress" else "Copy /compress") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCommandHelp = false }) { Text("Close") }
+            },
+        )
+    }
+    ui.modelSwitchConfirmation?.let { confirmation ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Switch to saved model?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${confirmation.provider} / ${confirmation.model}")
+                    Text(confirmation.message)
+                    confirmation.error?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = vm::confirmModelSwitch, enabled = !confirmation.switching) {
+                    Text(if (confirmation.switching) "Switching…" else "Confirm and switch")
+                }
+            },
+            dismissButton = {
+                if (confirmation.canKeepCurrent) {
+                    TextButton(onClick = vm::keepCurrentModel, enabled = !confirmation.switching) {
+                        Text("Keep current model")
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun CommandFeedbackCard(text: String, failed: Boolean, onDismiss: () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (failed) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.secondaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    if (failed) "Command needs attention" else "Command result",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (failed) MaterialTheme.colorScheme.onErrorContainer
+                    else MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.Close, contentDescription = "Dismiss command result")
+                }
+            }
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 144.dp).verticalScroll(rememberScrollState()),
+            ) {
+                MarkdownText(text = text)
             }
         }
     }
@@ -603,6 +800,7 @@ private fun ChatItemView(
     botName: String,
     onDismissItem: ((String) -> Unit)? = null,
     onInterruptStall: (() -> Unit)? = null,
+    onFileLink: (String) -> Boolean = { false },
 ) {
     val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp
     when (item.kind) {
@@ -620,7 +818,7 @@ private fun ChatItemView(
                 )
             }
         }
-        // Assistant output never floats naked — soft container with a 4 dp sender corner (A4).
+        // Keep assistant output in a soft container with a 4 dp sender corner.
         ItemKind.ASSISTANT -> Surface(
             color = MaterialTheme.colorScheme.surfaceContainer,
             shape = AssistantBubbleShape,
@@ -634,16 +832,18 @@ private fun ChatItemView(
                     .widthIn(max = maxBubbleWidth),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                MarkdownText(text = item.text, modifier = Modifier.weight(1f, fill = false))
+                Column(Modifier.weight(1f, fill = false)) {
+                    MarkdownText(text = item.text, onFileLink = onFileLink)
+                    item.imageDataUrl?.let { TranscriptImage(it) }
+                }
                 if (item.streaming) BlinkingCaret()
             }
         }
         ItemKind.TOOL -> ToolChip(item)
-        // The one inline system-line style, shared with the banner (A28). Id prefixes carry
+        // The one inline system-line style, shared with the banner. Id prefixes carry
         // the client-side affordances (ChatStream KDoc): "stall-"/"quiet-" watchdog lines
         // gain an Interrupt action, "warn-" lines render server warning text verbatim —
-        // every line is dismissible (incident 2026-09-16: nothing may be undownloadable
-        // from the screen).
+        // every line is dismissible from the screen.
         ItemKind.ERROR -> {
             val stall = item.id.startsWith(ChatStream.STALL_ID_PREFIX)
             val quiet = item.id.startsWith(ChatStream.QUIET_ID_PREFIX)
@@ -689,11 +889,11 @@ private fun TimeSeparatorRow(label: String) {
     }
 }
 
-/** Streaming caret: a blinking 2x18 dp box — no text reflow (A8). */
+/** Blinking streaming caret that does not change text layout. */
 @Composable
 private fun BlinkingCaret() {
     val transition = rememberInfiniteTransition(label = "caret")
-    // PERF (QA S1): alpha is read inside the graphicsLayer lambda (draw phase only) — the
+    // Read alpha inside the graphicsLayer lambda (draw phase only) — the
     // old composition read rebuilt the brush every frame.
     val alpha = transition.animateFloat(
         initialValue = 1f,
@@ -713,14 +913,15 @@ private fun BlinkingCaret() {
 @Composable
 private fun ToolChip(item: ChatItem) {
     var open by remember(item.id) { mutableStateOf(false) }
-    // Q7 (QA 2026-09-14): "Show all" unclamps the summary + output inside the chip.
+    // "Show all" expands the summary and output inside the chip.
     var showAll by remember(item.id) { mutableStateOf(false) }
-    // Agent-ux P0: a diff alone is reason enough to expand — it's the review surface.
+    val detailsScrollState = rememberScrollState()
+    // A diff alone is enough to make the tool chip expandable.
     val expandable = item.summary != null || item.text.isNotBlank() ||
         item.outputText != null || item.inlineDiff != null
-    // Q8: humane label on the chip face; the raw name stays in the expandable detail.
+    // Show a readable label on the chip; the raw name stays in the expandable detail.
     val toolLabel = ai.hermes.bots.ui.util.Humanize.toolLabel(item.toolName)
-    // Soft entrance for newly appearing chips (A8).
+    // Animate newly appearing chips.
     val entrance = remember { MutableTransitionState(false).apply { targetState = true } }
     Column(Modifier.fillMaxWidth()) {
         AnimatedVisibility(
@@ -732,7 +933,7 @@ private fun ToolChip(item: ChatItem) {
                 shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth().clickable(enabled = expandable) { open = !open },
             ) {
-            // Expanded detail lives INSIDE the chip surface (A14).
+            // Keep expanded details inside the chip surface.
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Row(
                     Modifier.heightIn(min = 32.dp),
@@ -747,8 +948,7 @@ private fun ToolChip(item: ChatItem) {
                             color = MaterialTheme.colorScheme.secondary,
                         )
                     } else {
-                        // Q12 (QA 2026-09-14): failed runs show an error-tinted icon instead
-                        // of the success check; duration stays.
+                        // Failed runs show an error-tinted icon instead of the success check.
                         Icon(
                             if (item.failed) Icons.Outlined.Warning else Icons.Outlined.CheckCircle,
                             contentDescription = if (item.failed) "Failed" else null,
@@ -772,8 +972,7 @@ private fun ToolChip(item: ChatItem) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    // Agent-ux P0 (spec §4): the collapsed chip's diff preview is a
-                    // Cursor-style +N −M badge; the rows themselves render when expanded.
+                    // Show a compact change count while collapsed; render rows when expanded.
                     item.inlineDiff?.let { raw ->
                         val (added, removed) = remember(item.id, raw) { DiffText.addedRemoved(raw) }
                         Text(
@@ -800,7 +999,7 @@ private fun ToolChip(item: ChatItem) {
                     }
                 }
                 if (open) {
-                    // Q8 fidelity: the raw tool name stays readable in the detail.
+                    // Keep the raw tool name readable in the detail.
                     item.toolName?.takeIf {
                         it.isNotBlank() && !it.equals(toolLabel, ignoreCase = true)
                     }?.let {
@@ -812,52 +1011,61 @@ private fun ToolChip(item: ChatItem) {
                             modifier = Modifier.padding(top = 6.dp),
                         )
                     }
-                    // Q5 (QA 2026-09-14): clamp the summary so server context can't blow out
-                    // the bubble; "Show all" reveals the full text.
-                    item.summary?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp),
-                            maxLines = if (showAll) 24 else 6,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().then(
+                            if (showAll) {
+                                Modifier.heightIn(max = 240.dp).verticalScroll(detailsScrollState)
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    ) {
+                        // Clamp the preview; expanded details remain fully scrollable.
+                        item.summary?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp),
+                                maxLines = if (showAll) Int.MAX_VALUE else 6,
+                                overflow = if (showAll) TextOverflow.Clip else TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (item.text.isNotBlank()) {
+                            Text(
+                                item.text,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                                maxLines = if (showAll) Int.MAX_VALUE else 8,
+                                overflow = if (showAll) TextOverflow.Clip else TextOverflow.Ellipsis,
+                            )
+                        }
+                        // Show flattened result output when the session omits verbose details.
+                        item.outputText?.let {
+                            Text(
+                                it,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                                maxLines = if (showAll) Int.MAX_VALUE else 8,
+                                overflow = if (showAll) TextOverflow.Clip else TextOverflow.Ellipsis,
+                            )
+                        }
+                        item.inlineDiff?.let { DiffView(it, showAll) }
                     }
-                    if (item.text.isNotBlank()) {
-                        Text(
-                            item.text,
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                            maxLines = if (showAll) 24 else 8,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    // Q7 follow-up (live QA 2026-09-14): the run's own output — on
-                    // non-verbose sessions this is flattened from the `result` payload.
-                    item.outputText?.let {
-                        Text(
-                            it,
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                            maxLines = if (showAll) 24 else 8,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    // Agent-ux P0 (spec §4): tool.complete `inline_diff?` as red/green rows.
-                    item.inlineDiff?.let { DiffView(it, showAll) }
                     if (expandable) {
                         Text(
                             if (showAll) "Show less" else "Show all",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .clickable { showAll = !showAll }
-                                .padding(top = 4.dp, bottom = 2.dp),
+                                .padding(vertical = 4.dp),
                         )
                     }
                 }
@@ -868,8 +1076,7 @@ private fun ToolChip(item: ChatItem) {
 }
 
 /**
- * Agent-ux P0 (spec §4): unified-diff rows inside the expandable ToolChip — the review
- * surface Cursor/Claude Code made the trust anchor. Rows share one horizontal scroll so a
+ * Unified-diff rows inside the expandable tool chip. Rows share one horizontal scroll so a
  * long line stays aligned across the whole hunk; collapsed shows a short preview, the
  * chip's existing "Show all" reveals the capped full diff (DiffText.MAX_LINES).
  */
@@ -913,8 +1120,8 @@ private fun DiffView(raw: String, expandedAll: Boolean) {
 }
 
 /**
- * Agent-ux P0 (spec §5): the pinned plan checklist fed by todo.updated events. Header
- * carries done/total like the desktop plan anchor; per-item glyphs: outlined check (done),
+ * The pinned plan checklist fed by todo.updated events. Header carries the done/total count;
+ * per-item glyphs show completed, active, and pending states:
  * pulsing dot (active), hollow circle (pending).
  */
 @Composable
@@ -948,7 +1155,7 @@ private fun TodoCard(items: List<TodoItem>) {
                 )
                 Spacer(Modifier.weight(1f))
                 Icon(
-                    if (collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                    if (collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
                     contentDescription = if (collapsed) "Expand" else "Collapse",
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -999,9 +1206,12 @@ private fun ApprovalCardView(
     resolved: String?,
     expired: Boolean,
     onRespond: (String) -> Unit,
+    onRespondBatch: (Map<String, String>) -> Unit,
     onSkip: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
 ) {
+    var answers by remember(card.requestId) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var secret by remember(card.requestId) { mutableStateOf("") }
     val kindLabel = when (card.kind) {
         Catalog.EVENT_CLARIFY_REQUEST -> "Question"
         Catalog.EVENT_SUDO_REQUEST -> "Elevated access requested"
@@ -1012,9 +1222,12 @@ private fun ApprovalCardView(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Kind demoted to an overline; the ask itself is the title (A13).
+                // Render the kind as an overline and the request itself as the title.
                 Text(
                     kindLabel,
                     style = MaterialTheme.typography.labelSmall,
@@ -1022,7 +1235,7 @@ private fun ApprovalCardView(
                     modifier = Modifier.weight(1f),
                 )
                 if (onDismiss != null) {
-                    // 48 dp target (fleet-pulse-ui-spec §2); the icon is the visual only.
+                    // The icon is visual only; the full 48 dp area is the touch target.
                     IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
                         Icon(
                             Icons.Filled.Close,
@@ -1039,6 +1252,33 @@ private fun ApprovalCardView(
                 textDecoration = if (expired) TextDecoration.LineThrough else null,
                 color = if (expired) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             )
+            if (card.questions.isNotEmpty() && resolved == null && !expired) {
+                card.questions.forEach { (qid, question) ->
+                    OutlinedTextField(
+                        value = answers[qid].orEmpty(),
+                        onValueChange = { answers = answers + (qid to it) },
+                        label = { Text(question) },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 3,
+                    )
+                }
+                TextButton(
+                    onClick = { onRespondBatch(answers) },
+                    enabled = card.questions.all { answers[it.first]?.isNotBlank() == true },
+                ) { Text("Answer questions") }
+            }
+            if (card.kind == Catalog.EVENT_SECRET_REQUEST && resolved == null && !expired) {
+                OutlinedTextField(
+                    value = secret,
+                    onValueChange = { secret = it },
+                    label = { Text("Secret") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(onClick = { onRespond(secret); secret = "" }, enabled = secret.isNotEmpty()) {
+                    Text("Submit secret")
+                }
+            }
             when {
                 expired -> Text(
                     "Expired — no action taken",
@@ -1060,12 +1300,10 @@ private fun ApprovalCardView(
                         ChoiceRow(letter = "✓", label = resolved, chosen = true, dimmed = false, enabled = false, onChoose = {})
                     }
                 }
-                card.choices.isEmpty() && resolved == null && !expired -> {
-                    // Q11 (QA 2026-09-14): a free-text clarify legitimately arrives with no
-                    // choices (desktop renders a typed input) — never fabricate buttons.
-                    // QA 2026-09-19: the composer is the answer field (placeholder says so),
-                    // but when the session is down it isn't there — the Skip keeps the card
-                    // escapable in every state (desktop parity: empty answer = skip).
+                card.choices.isEmpty() && card.questions.isEmpty() && card.kind != Catalog.EVENT_SECRET_REQUEST && !expired -> {
+                    // A free-text clarify arrives without choices, so do not fabricate buttons.
+                    // The composer is the answer field; Skip also keeps this card escapable
+                    // when the session is unavailable.
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
                             "No preset options — reply below to answer.",
@@ -1080,6 +1318,7 @@ private fun ApprovalCardView(
                         }
                     }
                 }
+                card.questions.isNotEmpty() || card.kind == Catalog.EVENT_SECRET_REQUEST -> Unit
                 else -> card.choices.forEachIndexed { index, choice ->
                     ChoiceRow(
                         letter = ('A' + index).toString(),
@@ -1152,9 +1391,9 @@ private fun ChoiceRow(
     }
 }
 
-// ---------- Bubble Mode (UI-SPEC.md §4.2 rev) ----------
+// ---------- Bubble Mode ----------
 
-/** Scroll-position snapshot for the D1 at-bottom tracker (data class: distinct-until-changed). */
+/** Scroll-position snapshot used to detect whether the reader moved. */
 private data class ScrollPos(val firstVisibleIndex: Int, val firstVisibleOffset: Int) {
     /** True when this scroll position sits earlier in the transcript than [other] (scrolled up). */
     fun isBefore(other: ScrollPos): Boolean =
@@ -1168,7 +1407,7 @@ private const val DockSlackPx = 8
 /**
  * Scroll to [index], then consume any remaining scrollable distance so the row's BOTTOM edge
  * docks at the viewport bottom. `scrollToItem`/`animateScrollToItem` align the item's TOP —
- * for a last row taller than the viewport that leaves its tail cut off (D1-tall), so after
+ * for a last row taller than the viewport that leaves its tail cut off, so after
  * the jump we wait for the post-jump measure and scroll the leftover distance (clamped by
  * the scroll range, so over-estimating is harmless).
  */
@@ -1231,7 +1470,7 @@ private fun streamingTextVisible(items: List<ChatItem>): Boolean {
 }
 
 /**
- * D4 visibility gates. A TOOL item renders only when it has a name, summary or args text;
+ * Visibility gates. A TOOL item renders only when it has a name, summary or args text;
  * an assistant item renders when it has text — document mode keeps a streaming blank as the
  * caret-only "started typing" container, bubble mode replaces it with the typing bubble.
  */
@@ -1270,7 +1509,7 @@ private fun BubbleUserView(item: ChatItem) {
 
 /** Bot turn: raised bubble with the per-bot accent as a 3 dp leading edge (§4.2 rev). */
 @Composable
-private fun BubbleBotView(item: ChatItem, botName: String) {
+private fun BubbleBotView(item: ChatItem, botName: String, onFileLink: (String) -> Boolean) {
     val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).dp
     val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val accent = BotAccent.color(botName, darkTheme)
@@ -1296,7 +1535,10 @@ private fun BubbleBotView(item: ChatItem, botName: String) {
                 .widthIn(max = maxBubbleWidth),
             verticalAlignment = Alignment.Bottom,
         ) {
-            MarkdownText(text = item.text, modifier = Modifier.weight(1f, fill = false))
+            Column(Modifier.weight(1f, fill = false)) {
+                MarkdownText(text = item.text, onFileLink = onFileLink)
+                item.imageDataUrl?.let { TranscriptImage(it) }
+            }
             if (item.streaming) BlinkingCaret()
         }
     }
@@ -1351,6 +1593,7 @@ private fun BubbleAlwaysView(
     botName: String,
     onDismissItem: ((String) -> Unit)? = null,
     onInterruptStall: (() -> Unit)? = null,
+    onFileLink: (String) -> Boolean = { false },
 ) {
     if (item.kind == ItemKind.ERROR) {
         val stall = item.id.startsWith(ChatStream.STALL_ID_PREFIX)
@@ -1391,10 +1634,42 @@ private fun BubbleAlwaysView(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
-                MarkdownText(text = item.text)
+                MarkdownText(text = item.text, onFileLink = onFileLink)
             }
         }
     }
+}
+
+@Composable
+internal fun TranscriptImage(dataUrl: String) {
+    val mime = remember(dataUrl) { dataUrl.substringAfter("data:").substringBefore(';').takeIf { it.startsWith("image/") } ?: "image/png" }
+    val extension = if (mime == "image/jpeg") "jpg" else mime.substringAfter('/').takeIf { it in listOf("png", "webp", "gif") } ?: "png"
+    val bytes = remember(dataUrl) {
+        runCatching { android.util.Base64.decode(dataUrl.substringAfter("base64,"), android.util.Base64.DEFAULT) }.getOrNull()
+    } ?: return
+    val bitmap = remember(dataUrl) {
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    } ?: return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Image(bitmap = bitmap, contentDescription = "Generated image", modifier = Modifier.fillMaxWidth())
+    TextButton(onClick = {
+        runCatching {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "bot-image.$extension")
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+            }
+            val target = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: error("Could not save image")
+            context.contentResolver.openOutputStream(target)?.use { it.write(bytes) }
+                ?: error("Could not write image")
+            val share = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(android.content.Intent.EXTRA_STREAM, target)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(share, "Share image"))
+        }
+    }) { Text("Save and share") }
 }
 
 /** §4.2 rev: the "…" stand-in while the turn is streaming with no visible text yet. */
@@ -1421,7 +1696,7 @@ private fun TypingBubble() {
 @Composable
 private fun TypingDot(startOffsetMs: Int) {
     val transition = rememberInfiniteTransition(label = "typing-dot")
-    // PERF (QA S1): alpha read in the draw phase (graphicsLayer), not composition.
+    // Read alpha in the draw phase (graphicsLayer), not during composition.
     val alpha = transition.animateFloat(
         initialValue = 0.25f,
         targetValue = 1f,

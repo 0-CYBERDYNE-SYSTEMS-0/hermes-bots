@@ -22,11 +22,11 @@ import androidx.compose.ui.unit.dp
 
 
 /**
- * Burnt-orange working dot with a gentle pulse ring (audit A3/A29): outer ring scales
- * 1 → 1.6 and fades over 1200 ms — Grok's "presence you can feel", nothing loud.
+ * Burnt-orange working dot with a gentle pulse ring: outer ring scales
+ * 1 → 1.6 and fades over 1200 ms, keeping the animation quiet.
  * Optional `borderColor` separates the dot from a busy backdrop (avatar edge).
  *
- * PERF (QA S1): the animated values are read INSIDE the graphicsLayer lambda — draw phase
+ * Read animated values inside the graphicsLayer lambda — the draw phase
  * only. The outer Box keeps a fixed `dotSize * 2` footprint and the ring keeps a fixed
  * `dotSize` size, so a frame updates nothing but pixels; reading the scale during
  * composition into `Modifier.size` re-measured/re-placed the whole row every frame.

@@ -4,7 +4,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 
 /**
- * Transcript bubble geometry (audits A4/A10): 20 dp round bubbles with a 4 dp
+ * Transcript bubble geometry: 20 dp round bubbles with a 4 dp
  * "sender corner" pointing at the speaker — assistant top-start, user top-end.
  */
 val AssistantBubbleShape = RoundedCornerShape(

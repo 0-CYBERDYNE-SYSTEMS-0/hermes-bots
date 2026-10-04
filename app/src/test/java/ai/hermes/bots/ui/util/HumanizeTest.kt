@@ -69,7 +69,7 @@ class HumanizeTest {
 
   @Test
   fun `tool labels humanize known slugs`() {
-    // Q8 (QA 2026-09-14): chip titles / Running lines never show raw snake_case.
+    // Chip titles and Running lines never show raw snake_case.
     assertEquals("Terminal", Humanize.toolLabel("terminal"))
     assertEquals("Read file", Humanize.toolLabel("read_file"))
     assertEquals("Message agent", Humanize.toolLabel("message_agent"))

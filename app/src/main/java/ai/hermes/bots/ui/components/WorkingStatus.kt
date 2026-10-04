@@ -14,9 +14,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * The "single current-action line" (audit A29, Grok brief §6): tiny avatar +
+ * The single current-action line: tiny avatar +
  * "Working — {status}" + pulsing dot, shown above the composer while a turn runs.
- * Optional [accent] (UI-SPEC §3.1): the per-bot accent tints the pulsing dot; when null
+ * Optional [accent]: the per-bot accent tints the pulsing dot; when null
  * the default brand secondary is used, exactly as before.
  */
 @Composable

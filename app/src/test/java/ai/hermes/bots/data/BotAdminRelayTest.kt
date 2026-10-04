@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * B3: the editor's unconditional relay-enable write. Server facts this locks in
+ * The editor's unconditional relay-enable write. Server facts this locks in
  * (verified against hermes-agent source):
  *  - `ui_meta["hermes-bots"]` present (even `{}`) flips bot_mode_probe.is_bot_mode_managed,
  *    which is what makes gateways inject `message_agent`;

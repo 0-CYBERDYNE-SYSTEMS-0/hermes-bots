@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Agent-ux P0 (spec §5): the todo.updated payload is only "normalized todo state" in
+ * The todo.updated payload is described as "normalized todo state" in
  * PROTOCOL.md, so the parser must accept the common shapes and render nothing on junk.
  */
 class TodoStateTest {

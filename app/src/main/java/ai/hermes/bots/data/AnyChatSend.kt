@@ -1,9 +1,27 @@
 package ai.hermes.bots.data
 
 import ai.hermes.bots.protocol.RpcException
+import kotlinx.coroutines.flow.MutableStateFlow
+
+internal enum class AnyChatPinAlignmentState {
+    PENDING,
+    READY,
+    DEFERRED,
+    BLOCKED,
+    ;
+
+    fun shouldAttemptRecovery(): Boolean = this != READY
+
+    fun afterResume(running: Boolean?, inflight: Boolean?): AnyChatPinAlignmentState =
+        if (this == DEFERRED && running == false && inflight == false) READY else this
+}
+
+internal fun MutableStateFlow<Pair<String, String>>.setAdoptedSessionPin(pin: Pair<String, String>) {
+    value = if (pin.first.isNotBlank() && pin.second.isNotBlank()) pin else "" to ""
+}
 
 /**
- * Decision helpers for the AnyChat member send path (FLEET-CONNECT-SPEC B2 self-heal).
+ * Decision helpers for sending to a member in a client-orchestrated room.
  * A gateway restart re-mints live session ids server-side, so a room member's stored
  * canonical session id can go stale: prompt.submit then answers 4001 "session not found"
  * (hermes-agent tui_gateway/methods_prompt.py — the durable-identity fallback there only
@@ -49,6 +67,12 @@ internal class AnyChatMemberSend(private val member: AnyChatMember, private val 
         /** True when the member's gateway connection is live right now. */
         fun gatewayLive(): Boolean
 
+        /** True only when this exact session has completed saved-model alignment. */
+        fun alignedForSubmit(sessionId: String): Boolean
+
+        /** Safe user-facing reason when model alignment is pending or unconfirmed. */
+        fun alignmentBlockReason(): String
+
         /** prompt.submit to the member's session; throws on any failure. */
         suspend fun submit(sessionId: String, text: String)
 
@@ -64,8 +88,8 @@ internal class AnyChatMemberSend(private val member: AnyChatMember, private val 
          */
         suspend fun currentRow(staleSessionId: String?): BotRow?
 
-        /** A re-resolved session was adopted — restart collectors, reset the watermark. */
-        fun sessionAdopted(sessionId: String)
+        /** A re-resolved session was adopted and aligned before the retry may submit. */
+        suspend fun sessionAdopted(sessionId: String): Boolean
 
         /** The member's half-open streaming placeholder is dead — finalize/remove it. */
         fun streamingAborted()
@@ -95,6 +119,11 @@ internal class AnyChatMemberSend(private val member: AnyChatMember, private val 
                 ops.error("${ops.displayName}'s gateway is offline — check Gateways")
                 return false
             }
+            if (!ops.alignedForSubmit(target)) {
+                ops.streamingAborted()
+                ops.error(ops.alignmentBlockReason())
+                return false
+            }
             try {
                 ops.submit(target, text)
                 return true
@@ -110,7 +139,11 @@ internal class AnyChatMemberSend(private val member: AnyChatMember, private val 
                     ops.error("${ops.displayName} couldn't be reached — reopen the room")
                     return false
                 }
-                ops.sessionAdopted(sid)
+                if (!ops.sessionAdopted(sid)) {
+                    ops.streamingAborted()
+                    ops.error(ops.alignmentBlockReason())
+                    return false
+                }
             }
         }
     }

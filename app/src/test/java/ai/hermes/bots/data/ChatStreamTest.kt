@@ -9,8 +9,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * QA 2026-09-14: Q2 interim-seal semantics (desktop parity, prompt_turn.py:526-533),
- * Q6 resumed-session history row, Q12 tool failure from the wire, Q13 image bubble form.
+ * Interim sealing semantics (desktop parity, prompt_turn.py:526-533), resumed-session history,
+ * tool failure payloads, and image bubble form.
  */
 class ChatStreamTest {
   private var counter = 0
@@ -19,7 +19,7 @@ class ChatStreamTest {
   private fun anchor(text: String): List<ChatItem> =
       listOf(ChatItem("a-0", ItemKind.ASSISTANT, text, streaming = true))
 
-  // ── Q2: sealInterim ────────────────────────────────────────────────────────
+  // ── sealInterim ────────────────────────────────────────────────────────────
 
   @Test
   fun `interim seal keeps streamed text as its own segment and opens a fresh anchor`() {
@@ -59,7 +59,7 @@ class ChatStreamTest {
     assertFalse(out[0].streaming)
   }
 
-  // ── Q2: completeAnchor ─────────────────────────────────────────────────────
+  // ── completeAnchor ────────────────────────────────────────────────────────
 
   @Test
   fun `complete replaces only the newest anchor and leaves sealed segments untouched`() {
@@ -83,7 +83,7 @@ class ChatStreamTest {
   @Test
   fun `complete drops a never-rendered blank anchor`() {
     val out = ChatStream.completeAnchor(anchor(""), "", ::nextId)
-    assertTrue(out.isEmpty()) // D4 phantom-pill gate
+    assertTrue(out.isEmpty()) // Prevents a phantom pill.
   }
 
   @Test
@@ -130,7 +130,7 @@ class ChatStreamTest {
     assertFalse(items[0].streaming)
   }
 
-  // ── Q12: ToolResult ────────────────────────────────────────────────────────
+  // ── ToolResult ────────────────────────────────────────────────────────────
 
   @Test
   fun `terminal non-zero exit marks failure`() {
@@ -165,7 +165,7 @@ class ChatStreamTest {
     assertFalse(ToolResult.isFailure(null, Json.parseToJsonElement("""{"exit_code": 0}""")))
   }
 
-  // ── Q6: resumed-session history row ────────────────────────────────────────
+  // ── resumed-session history row ───────────────────────────────────────────
 
   @Test
   fun `resumed session row is rewritten without the raw session id`() {
@@ -185,7 +185,7 @@ class ChatStreamTest {
     assertEquals("hello", HistoryDisplay.assistant("hello"))
   }
 
-  // ── Q13: image attachment form unification ─────────────────────────────────
+  // ── image attachment form unification ─────────────────────────────────────
 
   @Test
   fun `history image attachment renders in the live bubble form`() {
@@ -209,15 +209,15 @@ class ChatStreamTest {
     assertEquals("🖼 cat.jpg", items[1].text)
   }
 
-  // ── Q7 follow-up (live QA 2026-09-14): non-verbose tool payloads ───────────
+  // ── non-verbose tool payloads ──────────────────────────────────────────────
 
   @Test
   fun `displayText flattens terminal output from the result payload`() {
     val result = Json.parseToJsonElement(
-        """{"output": "QA_FIX_PROBE_8\nDarwin localhost arm64", "exit_code": 0, "error": null}""",
+        """{"output": "BUILD_OUTPUT_SAMPLE\nworker ready", "exit_code": 0, "error": null}""",
     )
     assertEquals(
-        "QA_FIX_PROBE_8\nDarwin localhost arm64",
+        "BUILD_OUTPUT_SAMPLE\nworker ready",
         ToolResult.displayText(result),
     )
   }

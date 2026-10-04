@@ -12,7 +12,7 @@ data class TodoItem(val content: String, val status: TodoStatus)
 
 /**
  * `todo.updated` (PROTOCOL.md §6) documents only "normalized todo state" — no payload shape —
- * so this parser is tolerant by contract (agent-ux-p0-spec.md §5): a top-level array or an
+ * so this parser is tolerant by contract: a top-level array or an
  * object wrapping one under `todos`/`items`/`list`; items are read by their common content
  * and status key aliases, unknown status strings fall back to pending. Anything that does not
  * parse returns empty, which renders nothing — a server variation can never break the chat.

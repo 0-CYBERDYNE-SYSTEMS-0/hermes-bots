@@ -7,7 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * QA 2026-09-18: groups.log used to be fetched as a fixed window {since_seq: 0, limit: 100}
+ * groups.log used a fixed-window request {since_seq: 0, limit: 100}, which meant
  * on every poll, so rounds longer than the window never arrived (the log "froze"). The
  * fetch is now a delta from the last seen seq; these tests pin the merge contract.
  */

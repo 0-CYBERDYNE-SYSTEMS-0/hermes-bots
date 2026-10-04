@@ -9,7 +9,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
-/** Parsed `hermesbots://add-gateway?...` payload (FLEET-CONNECT-SPEC B1a). */
+/** Parsed `hermesbots://add-gateway?...` payload. */
 data class AddGatewayParams(
     val url: String, // normalized
     val label: String?,
@@ -29,7 +29,7 @@ data class GatewayDraft(
     val token: String,
 )
 
-/** One gateway in an exported/imported fleet config (secrets included per spec). */
+/** One gateway in an exported/imported fleet config, including its credentials. */
 @Serializable
 data class FleetConfigEntry(
     val name: String,
@@ -42,7 +42,7 @@ data class FleetConfigEntry(
 data class FleetMergeResult(val added: Int, val skipped: Int)
 
 /**
- * Fleet connection provisioning (FLEET-CONNECT-SPEC B1/B8): deep-link parsing, save-path
+ * Fleet connection provisioning: deep-link parsing, save-path
  * URL normalization, and the JSON fleet-config export/import format. The codec pieces are
  * pure and unit-tested; the coordinator wraps ConnectionRepository for the UI.
  */
@@ -52,7 +52,7 @@ object FleetProvisioning {
     const val HOST = "add-gateway"
 
     /**
-     * B8 save-path normalization: trim whitespace, strip trailing slashes, prefix http://
+     * Save-path normalization: trim whitespace, strip trailing slashes, prefix http://
      * onto scheme-less host:port. Does NOT invent a default port (the caller knows it).
      */
     fun normalizeBaseUrl(input: String): String {
@@ -60,6 +60,21 @@ object FleetProvisioning {
         if (s.isEmpty()) return s
         if (!s.contains("://")) s = "http://$s"
         return s
+    }
+
+    /** Remote gateways must use TLS; cleartext is reserved for the local USB reverse tunnel. */
+    fun transportError(baseUrl: String): String? {
+        val uri = runCatching { java.net.URI(normalizeBaseUrl(baseUrl)) }.getOrNull()
+            ?: return "Enter a valid gateway address."
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") return "Use an http or https gateway address."
+        if (uri.host.isNullOrBlank()) return "Enter a valid gateway host."
+        if (uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null) {
+            return "Enter credentials in the fields below, not in the address."
+        }
+        val localHost = uri.host.equals("localhost", ignoreCase = true) || uri.host == "127.0.0.1"
+        if (scheme == "http" && !localHost) return "Remote gateways must use HTTPS."
+        return null
     }
 
     /**
@@ -112,7 +127,7 @@ object FleetProvisioning {
         java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 }
 
-/** Pure JSON codec for the Settings "Fleet config" export/import (B1c). Unit-tested. */
+/** Pure JSON codec for the Settings "Fleet config" export/import. Unit-tested. */
 object FleetConfigCodec {
 
     @Serializable
@@ -211,8 +226,8 @@ object FleetConfigCodec {
 }
 
 /**
- * Graph-scoped coordinator: holds the one-shot pre-fill draft driven by a deep link (B1a)
- * and the fleet-config import path (B1c). Pure logic lives in the objects above.
+ * Graph-scoped coordinator: holds the one-shot pre-fill draft driven by a deep link
+ * and the fleet-config import path. Pure logic lives in the objects above.
  */
 class FleetProvisioningCoordinator(private val repo: ConnectionRepository) {
 
@@ -275,7 +290,7 @@ class FleetProvisioningCoordinator(private val repo: ConnectionRepository) {
         repo.upsert(record)
     }
 
-    /** Import merge (B1c): returns the humane counts, e.g. "Added 2, skipped 1". */
+    /** Import merge returns humane counts, e.g. "Added 2, skipped 1". */
     suspend fun importRecords(text: String): FleetMergeResult {
         val entries = FleetConfigCodec.parse(text)
         val incoming = FleetConfigCodec.toRecords(entries)

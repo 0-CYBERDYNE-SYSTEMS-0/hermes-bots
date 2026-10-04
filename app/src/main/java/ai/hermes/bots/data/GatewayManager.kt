@@ -38,7 +38,7 @@ class GatewayManager(
     val socketStates: StateFlow<Map<String, SocketState>> = _socketStates
 
     /**
-     * Per-connection relay observability (B5): {Unknown, Supported, Unsupported} + last
+     * Per-connection relay observability: {Unknown, Supported, Unsupported} + last
      * successful drain. Never latches — RelayEngine re-probes on reconnect and flips it back.
      */
     private val relayBoard = RelayStatusBoard()
@@ -70,7 +70,7 @@ class GatewayManager(
         }
     }
 
-    // D2: probe/verify run the caller's context (ViewModels/Main) — confine to IO so no
+    // Probe/verify run in the caller's context (ViewModels/Main); confine to IO so no
     // OkHttp object (client, task runner, websocket cancel) is ever touched on Main. The
     // FleetProbe finally-block's socket.stop() → ws.cancel() → TaskQueue.shutdown() was the
     // ANR-trace monitor contention against the main thread's IME dispatch.
@@ -78,7 +78,7 @@ class GatewayManager(
         Auth.probe(client, record.baseUrl)
     }
 
-    /** Full verification probe (B6): health + credentials + one-shot WS + capability bits. */
+    /** Full verification probe: health + credentials + one-shot WS + capability bits. */
     suspend fun verifyFleet(record: ConnectionRecord): FleetProbeResult = withContext(Dispatchers.IO) {
         FleetProbe.run(client, record.baseUrl, record.auth)
     }

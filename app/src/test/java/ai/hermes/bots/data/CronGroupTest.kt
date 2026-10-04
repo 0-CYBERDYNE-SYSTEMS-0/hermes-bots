@@ -32,6 +32,20 @@ class CronGroupTest {
     }
 
     @Test
+    fun `cron job row keeps the gateway run outcome and delivery error`() {
+        val job = CronRepository.parseJob(
+            "c1",
+            json.parseToJsonElement(
+                """{"id":"j3","schedule":"0 9 * * *","last_status":"delivery_failed",
+                   "last_error":null,"last_delivery_error":"Telegram is unavailable"}""",
+            ).jsonObject,
+        )!!
+        assertEquals("delivery_failed", job.lastStatus)
+        assertNull(job.lastError)
+        assertEquals("Telegram is unavailable", job.lastDeliveryError)
+    }
+
+    @Test
     fun `cron job without id rejected`() {
         assertNull(CronRepository.parseJob("c1", json.parseToJsonElement("""{"name":"x"}""").jsonObject))
     }
@@ -52,7 +66,7 @@ class CronGroupTest {
 
     @Test
     fun `room parse keeps member display names and pending action choice set`() {
-        // Q10 (QA 2026-09-14): display_name rides the wire members array; the pending
+        // display_name rides the wire members array; the pending
         // action's choices mirror the driver-sanitized once/deny set.
         val room = GroupRepository.parseRoomForTest(
             "c1",

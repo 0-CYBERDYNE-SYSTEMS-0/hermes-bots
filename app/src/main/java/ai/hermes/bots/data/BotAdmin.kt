@@ -3,8 +3,10 @@ package ai.hermes.bots.data
 import ai.hermes.bots.protocol.Catalog
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -33,6 +35,94 @@ object BotAdmin {
     }
 
     fun describeParams(name: String): JsonObject = buildJsonObject { put("name", name) }
+
+    /** Profile-scoped config reads (PROTOCOL.md §5.4). */
+    fun configGetParams(key: String, profile: String): JsonObject = buildJsonObject {
+        put("key", key)
+        if (profile.isNotBlank()) put("profile", profile)
+    }
+
+    /** Profile-scoped config writes (PROTOCOL.md §5.4). */
+    fun configSetParams(
+        key: String,
+        value: JsonElement,
+        profile: String,
+        confirmExpensiveModel: Boolean = false,
+    ): JsonObject = buildJsonObject {
+        put("key", key)
+        put("value", value)
+        if (profile.isNotBlank()) put("profile", profile)
+        if (confirmExpensiveModel) put("confirm_expensive_model", true)
+    }
+
+    fun configSetParams(
+        key: String,
+        value: String,
+        profile: String,
+        confirmExpensiveModel: Boolean = false,
+    ): JsonObject = configSetParams(
+        key = key,
+        value = JsonPrimitive(value),
+        profile = profile,
+        confirmExpensiveModel = confirmExpensiveModel,
+    )
+
+    /** Values shown by the editor's Prep section from config.get full. */
+    data class PrepConfig(
+        val approvalMode: String,
+        val approvalTimeoutSeconds: Long? = null,
+        val clarifyTimeoutSeconds: Long? = null,
+        val commandAllowlist: List<String>? = null,
+    )
+
+    /** Parse the complete `config.get full` response used by the editor's Prep section. */
+    fun parsePrepConfig(result: JsonObject): PrepConfig {
+        val config = result["config"] as? JsonObject
+            ?: throw IllegalArgumentException("Incomplete config.get full response")
+
+        fun elementAt(vararg path: String): JsonElement? {
+            val dotted = config[path.joinToString(".")]
+            if (dotted != null) return dotted
+            var current: JsonElement? = config
+            for (part in path) current = (current as? JsonObject)?.get(part)
+            return current
+        }
+
+        fun text(element: JsonElement?): String? =
+            (element as? JsonPrimitive)
+                ?.takeUnless { it == JsonNull }
+                ?.content?.trim()?.ifBlank { null }
+
+        fun seconds(element: JsonElement?): Long? =
+            text(element)?.toLongOrNull()
+
+        val rawMode = elementAt("approvals", "mode") ?: elementAt("approval_mode")
+        val approvalMode = when (val mode = rawMode as? JsonPrimitive) {
+            null, JsonNull -> null
+            else -> when {
+                mode.booleanOrNull == false -> "off"
+                mode.booleanOrNull == true -> "manual"
+                mode.isString -> mode.content.trim().lowercase().takeIf { it in setOf("manual", "smart", "off") }
+                else -> null
+            }
+        } ?: throw IllegalArgumentException("config.get full did not include a valid approvals.mode")
+        val allowlist = when (val raw = elementAt("command_allowlist")) {
+            null -> null
+            JsonNull -> emptyList()
+            is JsonArray -> raw.mapNotNull { element ->
+                (element as? JsonPrimitive)
+                    ?.takeIf { it.isString }
+                    ?.content?.trim()?.ifBlank { null }
+            }
+            else -> throw IllegalArgumentException("config.get full returned an invalid command_allowlist")
+        }
+        return PrepConfig(
+            approvalMode = approvalMode,
+            approvalTimeoutSeconds = seconds(elementAt("approvals", "timeout")),
+            clarifyTimeoutSeconds = seconds(elementAt("clarify", "timeout")),
+            commandAllowlist = allowlist,
+        )
+    }
 
     data class UiMetaPatch(
         val sectionId: String? = null,
@@ -147,12 +237,12 @@ object BotAdmin {
         confirmMessage = str(result, "confirm_message"),
     )
 
-    // --- model catalog / keys (MODEL-UX-PUNCHLIST.md rev 2 / P1, P3, P7) ---
+    // --- model catalog / keys ---
 
     /**
      * Params for `model.options` (tui_gateway/methods_complete.py:277-286): the picker asks for
-     * UNCONFIGURED rows too, so the key-paste flow (P7) can offer them. `refresh: true` forces a
-     * server-side catalog rebuild (R8: empty models on an authenticated row is real, e.g.
+     * UNCONFIGURED rows too, so the key-paste flow can offer them. `refresh: true` forces a
+     * server-side catalog rebuild; empty models on an authenticated row are real, e.g.
      * openrouter).
      */
     fun modelOptionsParams(includeUnconfigured: Boolean = true, refresh: Boolean = false): JsonObject =
@@ -169,7 +259,7 @@ object BotAdmin {
 
     /**
      * `profiles.create` result `{ok, name, path, soul_written, model_set, mirrored{...}}`
-     * (tui_gateway/methods_profiles.py:367-375). R3: the echoed `name` is the RAW input while
+     * (tui_gateway/methods_profiles.py:367-375). The echoed `name` is the raw input while
      * the server lowercases it (hermes_cli/profiles.py:184-186,843) — the canonical profile id
      * is the last `path` component, so prefer it and fall back to `name`. `model_set` is only
      * meaningful when BOTH model and provider were sent.
@@ -193,7 +283,7 @@ object BotAdmin {
     }
 
     /**
-     * Extended configure parse (R9): the result carries an `applied` dict of which patches
+     * The configure result carries an `applied` dict of which patches
      * landed (tui_gateway/methods_profiles.py:483-502); `applied.model` is true/false when a
      * model pin was part of the request and ABSENT otherwise (null here). The existing
      * [ConfigureResult]/[parseConfigure] are kept untouched for BotEditorViewModel

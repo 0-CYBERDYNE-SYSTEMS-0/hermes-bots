@@ -126,7 +126,7 @@ private sealed interface NotifRow {
     }
 }
 
-/** A history entry with its bot identity resolved against the live roster (V3).
+/** A history entry with its bot identity resolved against the live roster.
  *  Unresolved rows (worker-session events) must not claim a false identity: they render
  *  as a neutral "Bot finished" line with a muted session-seeded avatar. */
 private data class ResolvedNotification(
@@ -178,7 +178,7 @@ private fun resolveNotifications(
 private const val FALLBACK_LABEL = "Hermes Bots"
 private const val UNRESOLVED_TITLE = "Bot finished"
 
-/** Newest-first history with day headers between calendar days (audit A22). */
+/** Newest-first history with day headers between calendar days. */
 private fun buildRows(
     history: List<ResolvedNotification>,
     zone: ZoneId = ZoneId.systemDefault(),

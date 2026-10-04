@@ -138,7 +138,7 @@ fun GroupsScreen(
             }
             ui.caps?.let { caps ->
                 if (!caps.supported) {
-                    // Designed empty, no protocol jargon (A17).
+                    // Designed empty, no protocol jargon.
                     ai.hermes.bots.ui.components.EmptyState(
                         title = "This gateway can't host group chats yet",
                         body = "Update Hermes on ${ui.connectionLabel} to enable them.",
@@ -308,7 +308,7 @@ private fun CreateGroupDialog(
                             enabled = entry.bot.name in selected.value || selected.value.size < 6,
                         )
                         Text(entry.bot.displayName ?: entry.bot.name)
-                        // B4: quiet gateway chip when this name exists on other gateways too.
+                        // Show a quiet gateway chip when this name exists on other gateways too.
                         if (entry.bot.name in collisionNames && connectionLabel.isNotBlank()) {
                             ai.hermes.bots.ui.components.ConnectionChip(connectionLabel)
                         }

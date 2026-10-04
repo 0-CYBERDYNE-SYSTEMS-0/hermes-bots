@@ -11,10 +11,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pure logic of the model verifier (MODEL-UX-PUNCHLIST.md rev 2, R2/R5/R12). */
+/** Pure logic of the model verifier. */
 class ModelVerifierTest {
 
-    // --- classifyCompletion: message.complete payload → verdict (R2 vocabulary) ---
+    // --- classifyCompletion: message.complete payload → verdict ---
 
     @Test
     fun `successful completion classifies WORKING with no reason`() {
@@ -45,7 +45,7 @@ class ModelVerifierTest {
 
     @Test
     fun `agent_init_failed unknown provider maps to provider hint`() {
-        // Live-probe trap (R1): overrides cannot resolve named-custom providers.
+        // Session overrides cannot resolve named custom providers.
         val (state, reason) = ModelVerifierLogic.classifyCompletion(
             buildJsonObject {
                 put("status", "error")
@@ -115,7 +115,7 @@ class ModelVerifierTest {
         assertEquals("Out of credits or over limit on the gateway's key", reason2)
     }
 
-    // --- findCompletion / fallbackEntry: the R5 timeout path ---
+    // --- findCompletion / fallbackEntry: timeout handling ---
 
     private fun ev(type: String, sid: String?, payload: JsonObject = buildJsonObject {}) =
         GatewayEvent(type = type, sessionId = sid, seq = 1L, payload = payload)
@@ -171,7 +171,7 @@ class ModelVerifierTest {
         assertEquals(ModelVerifierLogic.NO_RESPONSE_REASON, entry.reason)
     }
 
-    // --- connection-loss / start-failure entries: UNTESTED, never FAILED (R5) ---
+    // --- connection-loss / start-failure entries: inconclusive, never failed ---
 
     @Test
     fun `dropped entry is UNTESTED not FAILED`() {

@@ -4,7 +4,7 @@ import ai.hermes.bots.data.ChatItem
 import ai.hermes.bots.data.ItemKind
 
 /**
- * Bubble Mode row model (UI-SPEC.md §4.2 rev): the raw chat items regrouped into
+ * Bubble Mode row model: the raw chat items regrouped into
  * iMessage-style renderable rows. Time separators stay a concern of the screen.
  *
  * - User turns → [BubbleRow.User] (right-aligned powder-blue bubble).
@@ -24,7 +24,7 @@ sealed interface BubbleRow {
  * Relay lines a bot's canonical session receives on behalf of another bot. Current upstream
  * (tools/bot_mode_dm.py) injects "Message from 🤖 name (@handle): …"; older builds used the
  * bare "Message from @handle:" form — the desktop reference accepts both, so match on the
- * prefix alone and let the emoji/display-name/handle follow (D3).
+ * prefix alone and let the emoji/display-name/handle follow.
  */
 const val RELAY_MESSAGE_PREFIX = "Message from"
 const val RELAY_REPLY_PREFIX = "Reply from"

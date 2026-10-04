@@ -7,7 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-/** Whisper-quiet section subheader (Grok brief §2) — light gray, medium weight. */
+/** Quiet section subheader — light gray, medium weight. */
 @Composable
 fun SectionHeader(
   text: String,

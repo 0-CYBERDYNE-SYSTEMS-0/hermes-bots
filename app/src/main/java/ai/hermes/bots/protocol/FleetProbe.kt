@@ -14,7 +14,7 @@ import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 
 /**
- * Result of the full verification probe (FLEET-CONNECT-SPEC B6). `verified` means health +
+ * Result of the full verification probe. `verified` means health +
  * credentials + one-shot WS `gateway.ready` handshake all succeeded; the capability bits are
  * best-effort and null when that leg couldn't be answered (shown as "?" in the UI).
  */
@@ -30,7 +30,7 @@ data class FleetProbeResult(
 )
 
 /**
- * Full verification chain against one gateway (B6), replacing the REST-only Test:
+ * Full verification chain against one gateway, replacing the REST-only Test:
  * /api/status (health + auth detection) → credentials (token query param for open gateways,
  * cookie login + ws-ticket for gated — Auth.kt handles both, reused verbatim) → one-shot WS
  * whose first frame must be `gateway.ready` (epoch captured) → capability bits:
@@ -63,6 +63,14 @@ object FleetProbe {
                 reachable = status.reachable,
                 serverVersion = status.version,
                 failure = statusFailure(status),
+            )
+        }
+
+        if (status.portalSignInRequired) {
+            return FleetProbeResult(
+                reachable = true,
+                serverVersion = status.version,
+                failure = "This gateway requires portal sign-in, which this app doesn't support yet. Enable basic auth on the gateway host or use another gateway.",
             )
         }
 

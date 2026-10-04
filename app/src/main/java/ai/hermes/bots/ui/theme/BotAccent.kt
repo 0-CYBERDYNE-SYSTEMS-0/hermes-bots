@@ -3,7 +3,7 @@ package ai.hermes.bots.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Deterministic per-bot accent (UI-SPEC.md §3.1): a stable hue hashed from the bot's name,
+ * Deterministic per-bot accent: a stable hue hashed from the bot's name,
  * rendered at brand-compatible saturation/lightness per theme. The same name maps to the
  * same accent on every surface (roster dots, chat header, bubble edges); it is an identity
  * color, not a uniqueness guarantee. Brand chrome (primary/unread) stays powder blue +

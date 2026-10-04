@@ -4,7 +4,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pinned approval card lifetime (incident 2026-09-16: cards were pinned forever). */
+/** Pinned approval card lifetime. */
 class ApprovalPinPolicyTest {
 
   private val t0 = 5_000_000L

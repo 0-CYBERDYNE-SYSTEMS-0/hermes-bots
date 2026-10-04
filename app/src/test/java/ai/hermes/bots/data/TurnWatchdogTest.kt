@@ -6,8 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * TurnWatchdog policy (incident 2026-09-16): staleness is event silence, never run time.
- * Live dogfood calibration (same day): a plain `sleep 120` tool run emits no events for its
+ * TurnWatchdog policy: staleness is event silence, never run time.
+ * A long-running tool can emit no events during its sleep, so the 60 s mark stays advisory
  * whole duration, so the 60 s mark must stay advisory (SOFT) and only the server-budget
  * 600 s mark may release the composer (HARD).
  */

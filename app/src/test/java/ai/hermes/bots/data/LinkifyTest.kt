@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** Agent-ux P0 (spec §1): link boundary rules the renderer's scanner relies on. */
+/** Link boundary rules used by the renderer's scanner. */
 class LinkifyTest {
 
     @Test

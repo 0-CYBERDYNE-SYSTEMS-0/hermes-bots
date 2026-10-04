@@ -6,7 +6,6 @@ local.properties
 .DS_Store
 captures/
 *.keystore
-!debug.keystore
 *.jks
 keystore.properties
 .zcode/
@@ -20,6 +19,8 @@ keystore.properties
 /BOTS-MODE-PARITY.md
 /UI-SPEC.md
 /GBots-ref.md
+# Internal UX research, audits, and implementation specs
+/design/
 /docs/FLEET*.md
 /docs/GATEWAY-CONNECT-SHEET.md
 /docs/DELEGATION-E2E.md

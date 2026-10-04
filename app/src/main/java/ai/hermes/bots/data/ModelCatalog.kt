@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * One provider row of a `model.options` result (MODEL-UX-PUNCHLIST.md rev 2 / P1).
+ * One provider row of a `model.options` result.
  *
  * Protocol facts (verified 2026-09-13 against ~/.hermes/hermes-agent):
  * - RPC `model.options` with params `{include_unconfigured: true}` (tui_gateway/
@@ -17,7 +17,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * - `auth_type`/`key_env`/`warning` populate reliably only on UNAUTHENTICATED canonical rows;
  *   `aliases` only on is_user_defined rows (live: ["clinepass", "custom:clinepass",
  *   "custom:custom:clinepass"]); `featured_models` is empty for custom:* rows, so featured-first
- *   sorting is a no-op there (R8 — fine).
+ *   sorting is a no-op there.
  * - `authenticated` is credential PRESENCE, not validity.
  */
 data class ProviderOption(
@@ -81,7 +81,7 @@ object ModelCatalog {
     }
 
     /**
-     * R14: start-from/prefill provider matching must accept live aliases, not just exact slug
+     * Start-from/prefill provider matching accepts live aliases, not just exact slug
      * equality (exact equality silently misses when one context spells it
      * `custom:clinepass` and the other `clinepass`). Case-insensitive.
      */
@@ -94,7 +94,7 @@ object ModelCatalog {
 
     /**
      * Models of one provider, featured-first then natural (server) order, de-duplicated.
-     * Lookup is exact-slug first with an alias fallback (R14). Featured entries not present in
+     * Lookup is exact-slug first with an alias fallback. Featured entries not present in
      * `models` are ignored (never surface a model the row does not list).
      */
     fun modelsFor(providers: List<ProviderOption>, providerSlug: String): List<String> {
@@ -108,7 +108,7 @@ object ModelCatalog {
     }
 
     /**
-     * A2 vendor-prefix heuristic: a `custom:*` provider's model id needs a `vendor/` prefix
+     * A `custom:*` provider's model id needs a `vendor/` prefix
      * (the exact live breakage — the endpoint sends the id verbatim, per
      * hermes_cli/runtime_provider_custom.py:452-517, so bare ids 400 at turn time).
      */
@@ -116,7 +116,7 @@ object ModelCatalog {
         providerSlug.trim().lowercase().startsWith("custom") && !modelId.contains('/')
 
     /**
-     * Client-side bot-name normalization (R3/A6): the server lowercases via
+     * Client-side bot-name normalization: the server lowercases via
      * normalize_profile_name (hermes_cli/profiles.py:184-186,843) and echoes the RAW name, so
      * the app must send the normalized value itself and use it for roster matching.
      *
